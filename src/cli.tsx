@@ -47,4 +47,19 @@ if (args.includes("--version") || args.includes("-v")) {
 
 const initialPath = args.find((argument) => !argument.startsWith("-"));
 process.title = "DumbEditor";
-render(<App {...(initialPath ? { initialPath } : {})} />, { exitOnCtrlC: false });
+const useAlternateScreen = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+let screenRestored = false;
+const restoreScreen = () => {
+  if (!useAlternateScreen || screenRestored) return;
+  screenRestored = true;
+  process.stdout.write("\u001B[0m\u001B[?25h\u001B[?1049l");
+};
+
+if (useAlternateScreen) process.stdout.write("\u001B[?1049h\u001B[2J\u001B[H\u001B[?25l");
+const app = render(<App {...(initialPath ? { initialPath } : {})} />, { exitOnCtrlC: false });
+process.once("exit", restoreScreen);
+try {
+  await app.waitUntilExit();
+} finally {
+  app.unmount();
+}

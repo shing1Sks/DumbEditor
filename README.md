@@ -6,7 +6,8 @@ DumbEditor turns plain language into small, reversible FFmpeg edits. JEV routes 
 
 ## What works in v0.1
 
-- ANSI true color video preview inside the terminal
+- High resolution Sixel video preview in supported terminals, with an ANSI block fallback
+- Fixed player and chat regions so video frames do not redraw the conversation
 - Play/pause, five second seeking, preview audio, and volume controls
 - In and out marks for referring to “this section”
 - Remove one or more ranges
@@ -23,6 +24,7 @@ DumbEditor turns plain language into small, reversible FFmpeg edits. JEV routes 
 
 - Node.js 20 or newer
 - `ffmpeg`, `ffprobe`, and optionally `ffplay` on `PATH`
+- Windows Terminal 1.22+ or another Sixel terminal for the high resolution preview
 - A TypeSafe API key for JEV
 - An OpenRouter key only for edits routed to the agent
 
@@ -46,6 +48,19 @@ npm run dev -- video.mp4
 `dumbeditor setup` asks for the required JEV key and an optional OpenRouter key with hidden input, then writes them to `~/.dumbeditor/.env`. You can also copy `.env.example` to a project `.env`. The setup-managed user config takes precedence, followed by the current directory and the package-local `.env` used in development. Keep all `.env` files out of Git.
 
 Without OpenRouter, direct edits still work. Requests routed to the agent stop with a clear configuration message. If JEV rejects a missing, expired, or invalid credential, rerun `dumbeditor setup` with an active TypeSafe key.
+
+### Video preview backend
+
+DumbEditor automatically uses Sixel in Windows Terminal and terminals that advertise Sixel support. Frames are scaled with FFmpeg's Lanczos filter, encoded at terminal pixel resolution, and painted only inside the reserved player surface. The timeline is updated independently, so playback does not refresh the chat and input area.
+
+Force the portable block renderer if a terminal reports Sixel support incorrectly:
+
+```powershell
+$env:DUMBEDITOR_PREVIEW = "blocks"
+dumbeditor video.mp4
+```
+
+`DUMBEDITOR_CELL_WIDTH` and `DUMBEDITOR_CELL_HEIGHT` can override the estimated terminal cell size used to fit Sixel images. The defaults are tuned for Windows Terminal with Cascadia Mono.
 
 ## Controls
 

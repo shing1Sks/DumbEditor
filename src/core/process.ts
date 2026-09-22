@@ -69,8 +69,21 @@ export function spawnQuiet(command: string, args: string[], cwd?: string): Child
   return child;
 }
 
+export function trackProcess<T extends ChildProcess>(child: T): T {
+  runningProcesses.add(child);
+  child.once("close", () => runningProcesses.delete(child));
+  child.once("error", () => runningProcesses.delete(child));
+  return child;
+}
+
+export function terminateProcess(child: ChildProcess | null | undefined): void {
+  if (!child) return;
+  runningProcesses.delete(child);
+  if (!child.killed) child.kill();
+}
+
 /** Stop work owned by this editor instance when Ink unmounts or the user quits. */
 export function terminateRunningProcesses(): void {
-  for (const child of runningProcesses) child.kill();
+  for (const child of runningProcesses) if (!child.killed) child.kill();
   runningProcesses.clear();
 }

@@ -1,20 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { basename, resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import Spinner from "ink-spinner";
 import type { ChildProcess } from "node:child_process";
 import type { ChatMessage, MediaInfo, Selection } from "../types.js";
 import { executeAgentEdit } from "../core/agent.js";
 import { executeDirectEdit } from "../core/editor.js";
-import { extractFrame, playAudio, previewSize, probeMedia, streamPreview } from "../core/media.js";
+import { playAudio, probeMedia } from "../core/media.js";
 import { parseDirectEdit } from "../core/parse-edit.js";
 import { ProjectStore } from "../core/project.js";
-import { terminateRunningProcesses } from "../core/process.js";
+import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
 import { routeRequest } from "../core/router.js";
 import { formatTime } from "../core/time.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { Timeline } from "./Timeline.js";
+import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
 type Overlay = "help" | "history" | null;
 
@@ -25,9 +25,9 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [project, setProject] = useState<ProjectStore | null>(null);
   const [revision, setRevision] = useState(0);
   const [media, setMedia] = useState<MediaInfo | null>(null);
-  const [frame, setFrame] = useState("");
   const [currentTime, setCurrentTime] = useState(0);
   const currentTimeRef = useRef(0);
+  const displayedSecondRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(70);
   const [selection, setSelection] = useState<Selection>({ in: null, out: null });
@@ -40,18 +40,26 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [showAllHistory, setShowAllHistory] = useState(false);
   const didOpenInitialPath = useRef(false);
 
-  const size = useMemo(
-    () => media ? previewSize(media, Math.min(96, terminal.columns - 4), Math.max(6, terminal.rows - 18)) : { width: 0, height: 0 },
-    [media, terminal],
-  );
+  const chatRows = terminal.rows < 24 ? 2 : 4;
+  const playerRows = Math.max(6, terminal.rows - chatRows - 7);
+  const previewBackend = useMemo(() => activePreviewBackend(), []);
   const currentFile = project?.current.filePath;
 
   const movePlayhead = useCallback((next: number) => {
     if (!media) return;
     const value = Math.max(0, Math.min(media.duration, next));
     currentTimeRef.current = value;
+    displayedSecondRef.current = Math.floor(value);
     setCurrentTime(value);
   }, [media]);
+
+  const updatePreviewTime = useCallback((time: number, force: boolean) => {
+    currentTimeRef.current = time;
+    if (force) {
+      displayedSecondRef.current = Math.floor(time);
+      setCurrentTime(time);
+    }
+  }, []);
 
   const addUiMessage = useCallback((role: ChatMessage["role"], content: string) => {
     setMessages((items) => [...items, { role, content, at: new Date().toISOString() }].slice(-30));
@@ -71,8 +79,8 @@ export function App({ initialPath }: { initialPath?: string }) {
       setMessages(history.slice(-30));
       setSelection({ in: null, out: null });
       currentTimeRef.current = 0;
+      displayedSecondRef.current = 0;
       setCurrentTime(0);
-      setFrame("");
       setStatus(`Opened ${basename(path)}`);
       addUiMessage("assistant", `Opened ${basename(path)} · ${nextMedia.width}x${nextMedia.height} · ${formatTime(nextMedia.duration)}`);
     } catch (error) {
@@ -99,59 +107,16 @@ export function App({ initialPath }: { initialPath?: string }) {
   }, [initialPath, openVideo, addUiMessage]);
 
   useEffect(() => {
-    if (!currentFile || !media || playing || size.width === 0) return;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      void extractFrame(currentFile, currentTime, size, controller.signal)
-        .then((value) => { if (!controller.signal.aborted) setFrame(value); })
-        .catch((error) => { if (!controller.signal.aborted) setStatus(errorMessage(error)); });
-    }, 60);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [currentFile, currentTime, media, playing, size]);
-
-  useEffect(() => {
-    if (!currentFile || !media || !playing || size.width === 0) return;
-    let stopped = false;
-    const start = currentTimeRef.current >= media.duration - 0.05 ? 0 : currentTimeRef.current;
-    if (start === 0) movePlayhead(0);
-    const preview = streamPreview({
-      filePath: currentFile,
-      start,
-      size,
-      onFrame: (nextFrame, time) => {
-        if (stopped) return;
-        setFrame(nextFrame);
-        currentTimeRef.current = Math.min(time, media.duration);
-        setCurrentTime(currentTimeRef.current);
-      },
-      onEnd: () => { if (!stopped) setPlaying(false); },
-      onError: (error) => {
-        if (!stopped) {
-          setStatus(`Preview unavailable: ${error.message}`);
-          setPlaying(false);
-        }
-      },
-    });
-    return () => {
-      stopped = true;
-      preview.stop();
-    };
-  }, [currentFile, media, playing, size, movePlayhead]);
-
-  useEffect(() => {
-    if (!currentFile || !media?.hasAudio || !playing || size.width === 0) return;
+    if (!currentFile || !media?.hasAudio || !playing || playerRows === 0) return;
     let stopped = false;
     const audio: ChildProcess | null = playAudio(currentFile, currentTimeRef.current, volume, (error) => {
       if (!stopped) setStatus(`Audio preview unavailable: ${error.message}`);
     });
     return () => {
       stopped = true;
-      audio?.kill();
+      terminateProcess(audio);
     };
-  }, [currentFile, media, playing, size, volume]);
+  }, [currentFile, media, playing, playerRows, volume]);
 
   const answer = useCallback(async (content: string) => {
     addUiMessage("assistant", content);
@@ -166,7 +131,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/help") { setOverlay("help"); return; }
     if (command === "/clear") { setMessages([]); setOverlay(null); return; }
     if (command === "/play") { if (media) setPlaying(true); return; }
-    if (command === "/pause") { setPlaying(false); return; }
+    if (command === "/pause") { setCurrentTime(currentTimeRef.current); setPlaying(false); return; }
     if (command === "/open") {
       if (!argument) { await answer("Usage: /open <video path>"); return; }
       await openVideo(argument);
@@ -302,7 +267,13 @@ export function App({ initialPath }: { initialPath?: string }) {
     }
     if (key.upArrow) { setVolume((value) => Math.min(100, value + 5)); return; }
     if (key.downArrow) { setVolume((value) => Math.max(0, value - 5)); return; }
-    if (character === " " && input.length === 0) { if (media) setPlaying((value) => !value); return; }
+    if (character === " " && input.length === 0) {
+      if (media) {
+        if (playing) setCurrentTime(currentTimeRef.current);
+        setPlaying((value) => !value);
+      }
+      return;
+    }
     if (character === "[" && input.length === 0) { setSelection((value) => ({ ...value, in: currentTimeRef.current })); return; }
     if (character === "]" && input.length === 0) { setSelection((value) => ({ ...value, out: currentTimeRef.current })); return; }
     if (character && !key.ctrl && !key.meta && !key.tab) {
@@ -312,7 +283,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     }
   });
 
-  const visibleMessages = messages.slice(-5);
+  const visibleMessages = messages.slice(-chatRows);
   const versions = project?.history(showAllHistory ? project.snapshot.versions.length : 8) ?? [];
   void revision;
 
@@ -323,20 +294,32 @@ export function App({ initialPath }: { initialPath?: string }) {
         <Text dimColor>{project ? `${basename(project.snapshot.sourcePath)} · ${project.current.id}` : "No video"}</Text>
       </Box>
 
-      {overlay === "help" ? <Help /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} /> : (
-        <>
-          <Box justifyContent="center" minHeight={media ? Math.max(3, size.height / 2) : 3}>
-            {frame && media ? <Text>{frame}</Text> : <Text dimColor>{busy ? "Preparing preview…" : "No frame loaded"}</Text>}
-          </Box>
-          {media && <Timeline current={currentTime} duration={media.duration} selection={selection} width={terminal.columns} />}
-          <Box justifyContent="space-between">
-            <Text dimColor>{playing ? "▶ playing" : "Ⅱ paused"} · volume {volume}%{selection.in !== null ? ` · in ${formatTime(selection.in)}` : ""}{selection.out !== null ? ` · out ${formatTime(selection.out)}` : ""}</Text>
-            <Text dimColor>←/→ 5s · [ ] marks · /help</Text>
-          </Box>
-        </>
-      )}
+      <Box height={playerRows} minHeight={playerRows} flexDirection="column">
+        {overlay === "help" ? <Help /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} /> : (
+          <VideoSurface
+            {...(currentFile ? { filePath: currentFile } : {})}
+            media={media}
+            playing={playing}
+            time={currentTime}
+            columns={terminal.columns - 2}
+            rows={playerRows}
+            topRow={2}
+            selection={selection}
+            onTime={updatePreviewTime}
+            onEnd={() => setPlaying(false)}
+            onError={(error) => { setStatus(`Preview unavailable: ${error.message}`); setPlaying(false); }}
+          />
+        )}
+      </Box>
+      <Box height={1} minHeight={1}>
+        {media ? <Timeline current={currentTime} duration={media.duration} selection={selection} width={terminal.columns} /> : <Text> </Text>}
+      </Box>
+      <Box height={1} minHeight={1} justifyContent="space-between">
+        <Text dimColor>{playing ? "▶ playing" : "Ⅱ paused"} · volume {volume}%{selection.in !== null ? ` · in ${formatTime(selection.in)}` : ""}{selection.out !== null ? ` · out ${formatTime(selection.out)}` : ""}</Text>
+        <Text dimColor>{previewBackend.toUpperCase()} · ←/→ 5s · [ ] marks · /help</Text>
+      </Box>
 
-      <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="column" height={chatRows} minHeight={chatRows}>
         {visibleMessages.map((message, index) => (
           <Text key={`${message.at}-${index}`} wrap="truncate-end">
             <Text color={message.role === "user" ? "cyan" : "magenta"}>{message.role === "user" ? "you" : "dumb"} › </Text>
@@ -350,7 +333,7 @@ export function App({ initialPath }: { initialPath?: string }) {
         <Text>{input.slice(0, inputCursor)}</Text>
         {!busy && <Text inverse>{input[inputCursor] ?? " "}</Text>}
         <Text>{input.slice(inputCursor + (inputCursor < input.length ? 1 : 0))}</Text>
-        {busy && <Text color="yellow"><Spinner type="dots" /> {status}</Text>}
+        {busy && <Text color="yellow"> working · {status}</Text>}
       </Box>
       <Text dimColor>{busy ? status : `${status} · Enter to send · Ctrl+C to quit`}</Text>
     </Box>

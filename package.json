@@ -15,7 +15,7 @@
     "build": "tsup",
     "check": "tsc --noEmit",
     "dev": "tsx src/cli.tsx",
-    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/editor.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js",
     "quality": "npm run check && npm test && npm run build",
     "prepublishOnly": "npm run quality"
   },
@@ -37,7 +37,6 @@
     "@typesafe-ai/sdk": "^0.6.0",
     "dotenv": "^16.4.7",
     "ink": "^5.2.1",
-    "ink-spinner": "^5.0.0",
     "react": "^18.3.1"
   },
   "devDependencies": {
