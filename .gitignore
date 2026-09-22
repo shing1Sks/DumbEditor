@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.test-dist/
+.env
+.dumbeditor/
+coverage/
+*.log
