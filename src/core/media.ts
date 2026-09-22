@@ -66,8 +66,8 @@ export function previewRenderSize(
   backend: PreviewBackend,
 ): PreviewSize {
   if (backend === "blocks") return previewSize(info, maxColumns, maxRows);
-  const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 9);
-  const cellHeight = positiveInteger(process.env.DUMBEDITOR_CELL_HEIGHT, 18);
+  const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
+  const cellHeight = positiveInteger(process.env.DUMBEDITOR_CELL_HEIGHT, 20);
   const widthLimit = even(Math.max(0, Math.floor(maxColumns - 2) * cellWidth));
   const heightLimit = even(Math.max(0, Math.floor(maxRows) * cellHeight));
   if (widthLimit < 2 || heightLimit < 2) return { width: 0, height: 0 };

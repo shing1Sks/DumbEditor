@@ -19,16 +19,17 @@ export async function runSetup(): Promise<void> {
   const saved = await readSavedConfig();
   process.stdout.write("DumbEditor setup\nAPI keys are stored locally and are never printed.\n\n");
 
-  const jev = await promptSecret(`JEV / TypeSafe API key${saved.TYPESAFE_API_KEY || saved.JEV ? " (Enter keeps saved key)" : ""}: `);
-  const jevKey = jev || saved.TYPESAFE_API_KEY || saved.JEV;
-  if (!jevKey) throw new Error("A JEV / TypeSafe API key is required.");
+  const openai = await promptSecret(`OpenAI API key${saved.OPENAI_API_KEY ? " (Enter keeps saved key)" : ""}: `);
+  const openaiKey = openai || saved.OPENAI_API_KEY;
+  if (!openaiKey) throw new Error("An OpenAI API key is required.");
 
-  const openRouter = await promptSecret(`OpenRouter API key (optional${saved.OPENROUTER_API_KEY ? ", Enter keeps saved key" : ", Enter skips"}): `);
-  const openRouterKey = openRouter || saved.OPENROUTER_API_KEY;
+  const jevKey = saved.TYPESAFE_API_KEY || saved.JEV;
   const lines = [
     "# DumbEditor user configuration",
-    `TYPESAFE_API_KEY=${JSON.stringify(jevKey)}`,
-    ...(openRouterKey ? [`OPENROUTER_API_KEY=${JSON.stringify(openRouterKey)}`] : []),
+    `OPENAI_API_KEY=${JSON.stringify(openaiKey)}`,
+    "OPENAI_MODEL=gpt-6-luna",
+    ...(jevKey ? [`TYPESAFE_API_KEY=${JSON.stringify(jevKey)}`] : []),
+    ...(saved.OPENROUTER_API_KEY ? [`OPENROUTER_API_KEY=${JSON.stringify(saved.OPENROUTER_API_KEY)}`] : []),
     "",
   ];
   await mkdir(dirname(userConfigPath), { recursive: true });

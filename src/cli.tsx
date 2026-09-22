@@ -30,6 +30,11 @@ Controls:
   [ / ]          Mark selection in / out
 
 Commands:
+  /clip-remove <FROM> <TO> [FROM TO ...]
+  /clip-keep <FROM> <TO>
+  /speed <FROM> <TO> <FACTOR>
+  /mute <FROM> <TO>
+  /crop <WIDTH>x<HEIGHT> [X,Y]
   /open <path>       Open a video
   /version [all]     Show version history
   /revert <id>       Switch to a saved version

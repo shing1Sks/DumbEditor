@@ -68,7 +68,7 @@ export function VideoSurface(props: {
   const drawEncoded = (encoded: string) => {
     if (!mounted.current || !encoded) return;
     const layout = layoutRef.current;
-    const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 9);
+    const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
     const imageColumns = layout.backend === "sixel"
       ? Math.ceil(layout.size.width / cellWidth)
       : layout.size.width;
