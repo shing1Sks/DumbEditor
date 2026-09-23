@@ -50,7 +50,7 @@ export function ModelPanel(props: {
         <Header picker={props.picker} />
         {props.picker.step === "provider" && <ProviderChoices picker={props.picker} settings={props.settings} keys={props.keys} />}
         {props.picker.step === "slot" && <SlotChoices picker={props.picker} settings={props.settings} />}
-        {props.picker.step === "models" && <ModelChoices picker={props.picker} settings={props.settings} height={modalHeight - 5} />}
+        {props.picker.step === "models" && <ModelChoices picker={props.picker} settings={props.settings} height={modalHeight - 5} width={modalWidth - 6} />}
         <Box flexGrow={1} />
         <Footer step={props.picker.step} />
       </Box>
@@ -92,9 +92,9 @@ function SlotChoices({ picker, settings }: { picker: ModelPickerState; settings:
   </Box>;
 }
 
-function ModelChoices({ picker, settings, height }: { picker: ModelPickerState; settings: DumbEditorSettings; height: number }) {
+function ModelChoices({ picker, settings, height, width }: { picker: ModelPickerState; settings: DumbEditorSettings; height: number; width: number }) {
   const models = filteredPickerModels(picker);
-  const room = Math.max(3, height - 4);
+  const room = Math.max(3, height - 6);
   const start = Math.min(Math.max(0, picker.selectedIndex - room + 1), Math.max(0, models.length - room));
   const current = picker.provider === "openai" ? settings.models.openai.text : settings.models.openrouter[picker.slot];
   return <Box flexDirection="column" marginTop={1}>
@@ -104,12 +104,43 @@ function ModelChoices({ picker, settings, height }: { picker: ModelPickerState; 
     {picker.loading ? <Text color="yellow">Loading provider catalog…</Text>
       : picker.error ? <><Text color="yellow" wrap="truncate-end">{picker.error}</Text><Text dimColor>Press Enter to retry.</Text></>
         : models.length === 0 ? <Text dimColor>No models match “{picker.query}”.</Text>
-          : models.slice(start, start + room).map((model, offset) => (
-            <Choice key={model.id} selected={start + offset === picker.selectedIndex}
-              primary={`${model.id === current ? "● " : ""}${model.name}`} secondary={model.id} />
-          ))}
+          : <>
+            <ModelColumns width={width} />
+            {models.slice(start, start + room).map((model, offset) => (
+              <ModelChoice key={model.id} model={model} current={model.id === current}
+                selected={start + offset === picker.selectedIndex} width={width} />
+            ))}
+          </>}
     {!picker.loading && !picker.error && <Text dimColor>{models.length} models{models.length > room ? ` · showing ${start + 1}-${Math.min(start + room, models.length)}` : ""}</Text>}
+    {!picker.loading && !picker.error && models.length > 0 && <Text dimColor>Token prices per 1M unless another unit is shown.</Text>}
   </Box>;
+}
+
+function ModelColumns({ width }: { width: number }) {
+  const columns = columnWidths(width);
+  return <Text dimColor>{`  ${cell("MODEL", columns.model)} ${cell("INPUT", columns.price)} ${cell("OUTPUT", columns.price)}`}</Text>;
+}
+
+function ModelChoice({ model, current, selected, width }: {
+  model: ProviderModel;
+  current: boolean;
+  selected: boolean;
+  width: number;
+}) {
+  const columns = columnWidths(width);
+  const label = `${current ? "● " : ""}${model.name}${model.name === model.id ? "" : ` · ${model.id}`}`;
+  const row = `${selected ? "› " : "  "}${cell(label, columns.model)} ${cell(model.inputPrice ?? "—", columns.price)} ${cell(model.outputPrice ?? "—", columns.price)}`;
+  return <Text {...(selected ? { color: "black" as const, backgroundColor: "cyan" as const } : {})}>{row}</Text>;
+}
+
+function columnWidths(width: number): { model: number; price: number } {
+  const price = width >= 54 ? 12 : 8;
+  return { model: Math.max(8, width - (price * 2) - 4), price };
+}
+
+function cell(value: string, width: number): string {
+  if (value.length > width) return width <= 1 ? value.slice(0, width) : `${value.slice(0, width - 1)}…`;
+  return value.padEnd(width);
 }
 
 function Choice({ selected, primary, secondary }: { selected: boolean; primary: string; secondary: string }) {

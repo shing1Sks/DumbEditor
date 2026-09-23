@@ -48,6 +48,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [settings, setSettings] = useState<DumbEditorSettings>(() => structuredClone(DEFAULT_SETTINGS));
   const [modelPicker, setModelPicker] = useState<ModelPickerState>(initialModelPicker);
+  const [modelOverlayReady, setModelOverlayReady] = useState(false);
   const modelRequest = useRef(0);
   const didOpenInitialPath = useRef(false);
 
@@ -65,6 +66,12 @@ export function App({ initialPath }: { initialPath?: string }) {
   useEffect(() => { setSuggestionIndex(0); }, [input]);
   useEffect(() => () => terminateRunningProcesses(), []);
   useEffect(() => { void readSettings().then(setSettings).catch((error) => setStatus(errorMessage(error))); }, []);
+  useEffect(() => {
+    if (overlay !== "model") { setModelOverlayReady(false); return; }
+    setModelOverlayReady(false);
+    const timer = setTimeout(() => setModelOverlayReady(true), 0);
+    return () => clearTimeout(timer);
+  }, [overlay]);
   useEffect(() => {
     const onResize = () => setTerminal({ columns: stdout.columns ?? 100, rows: stdout.rows ?? 36 });
     stdout.on("resize", onResize);
@@ -154,16 +161,14 @@ export function App({ initialPath }: { initialPath?: string }) {
     try {
       const models = await listProviderModels(provider, slot);
       if (request !== modelRequest.current) return;
-      const current = provider === "openai" ? settings.models.openai.text : settings.models.openrouter[slot];
-      const selectedIndex = Math.max(0, models.findIndex((model) => model.id === current));
-      setModelPicker({ step: "models", provider, slot, models, query: "", selectedIndex, loading: false, error: null });
+      setModelPicker({ step: "models", provider, slot, models, query: "", selectedIndex: 0, loading: false, error: null });
     } catch (error) {
       if (request !== modelRequest.current) return;
       setModelPicker({ step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: false, error: errorMessage(error) });
     } finally {
       if (request === modelRequest.current) setLoader(null);
     }
-  }, [settings]);
+  }, []);
 
   const chooseModelPickerItem = useCallback(async () => {
     if (modelPicker.loading) return;
@@ -282,6 +287,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (key.ctrl && character === "c") { exit(); return; }
     if (overlay === "model") {
       if (key.escape || key.leftArrow) { backModelPicker(); return; }
+      if (!modelOverlayReady) return;
       if (modelPicker.loading || busy) return;
       if (key.upArrow || key.downArrow || key.tab) {
         setModelPicker((current) => {
@@ -348,8 +354,10 @@ export function App({ initialPath }: { initialPath?: string }) {
       <Box justifyContent="space-between"><Text bold color="magenta">DumbEditor</Text><Text dimColor>{project ? `${basename(project.snapshot.sourcePath)} · ${project.current.id}` : "No video"}</Text></Box>
       <Box height={layout.playerRows} minHeight={layout.playerRows} flexDirection="row">
         {overlay === "help" ? <Help /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} />
-          : overlay === "model" ? <ModelPanel picker={modelPicker} settings={settings} keys={providerKeyStatus()}
-            width={terminal.columns - 2} height={layout.playerRows} />
+          : overlay === "model" ? modelOverlayReady
+            ? <ModelPanel picker={modelPicker} settings={settings} keys={providerKeyStatus()}
+              width={terminal.columns - 2} height={layout.playerRows} />
+            : <Box width={terminal.columns - 2} height={layout.playerRows} />
           : <>
             {layout.leftSidebarColumns > 0 && <VersionsSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""} width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
