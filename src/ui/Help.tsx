@@ -9,7 +9,7 @@ export function Help() {
       <Text>/clip-remove FROM TO [FROM TO...]  /clip-keep FROM TO</Text>
       <Text>/speed FROM TO FACTOR  /mute FROM TO  /crop WIDTHxHEIGHT [X,Y]</Text>
       <Text>/open path  /version [all]  /revert id  /undo  /export path</Text>
-      <Text>/version-limits [N]  /model [provider] [type] [model]</Text>
+      <Text>/version-limits [N]  /model opens the interactive model picker</Text>
       <Text dimColor>Type / for commands, use ↑/↓ to choose, and Tab to complete.</Text>
       <Text dimColor>Or ask Luna normally: “remove the first two seconds and the last ten”.</Text>
       <Text dimColor>Esc closes this panel</Text>

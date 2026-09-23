@@ -18,13 +18,6 @@ export async function listProviderModels(provider: ModelProvider, slot: OpenRout
   return provider === "openai" ? listOpenAIModels() : listOpenRouterModels(slot);
 }
 
-export async function assertProviderModel(provider: ModelProvider, slot: OpenRouterSlot, model: string): Promise<void> {
-  const models = await listProviderModels(provider, slot);
-  if (!models.some((item) => item.id === model)) {
-    throw new Error(`${model} is not currently listed for ${provider} ${slot}. Open /model to see available choices.`);
-  }
-}
-
 async function listOpenAIModels(): Promise<ProviderModel[]> {
   const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) throw new Error("OpenAI key missing. Run dumbeditor setup.");

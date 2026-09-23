@@ -124,9 +124,7 @@ Editor commands:
   /revert <id>       Switch to a saved version
   /undo              Switch to the current version's parent
   /export <path>     Export the active version
-  /model             Show OpenAI and OpenRouter defaults
-  /model openai [MODEL]
-  /model openrouter [text|image|audio|music|video] [MODEL]
+  /model             Choose a provider, capability, and model interactively
   /status            Show project details
   /play              Play the preview
   /pause             Pause the preview

@@ -19,7 +19,7 @@ export const COMMANDS: CommandDefinition[] = [
   { name: "/revert", usage: "/revert <VERSION>", description: "Switch to a saved version" },
   { name: "/undo", usage: "/undo", description: "Go to the parent version" },
   { name: "/export", usage: "/export <OUTPUT PATH>", description: "Export the active version" },
-  { name: "/model", usage: "/model [PROVIDER] [TYPE] [MODEL]", description: "View or set provider model defaults" },
+  { name: "/model", usage: "/model", description: "Open the provider and model picker" },
   { name: "/status", usage: "/status", description: "Show project details" },
   { name: "/play", usage: "/play", description: "Play the preview" },
   { name: "/pause", usage: "/pause", description: "Pause the preview" },

@@ -8,7 +8,7 @@ import { providerKeyStatus } from "../core/config.js";
 import { executeDirectEdit } from "../core/editor.js";
 import { askOpenAI } from "../core/openai.js";
 import { playAudio, probeMedia } from "../core/media.js";
-import { assertProviderModel, listProviderModels } from "../core/models.js";
+import { listProviderModels } from "../core/models.js";
 import { ProjectStore } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
 import { DEFAULT_SETTINGS, OPENROUTER_SLOTS, readSettings, setDefaultModel, type DumbEditorSettings, type ModelProvider, type OpenRouterSlot } from "../core/settings.js";
@@ -16,7 +16,7 @@ import { formatTime } from "../core/time.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { editorLayout } from "./layout.js";
-import { ModelPanel, type ModelCatalogs } from "./ModelPanel.js";
+import { filteredPickerModels, initialModelPicker, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
 import { SessionSidebar, VersionsSidebar } from "./Sidebars.js";
 import { Timeline } from "./Timeline.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
@@ -47,9 +47,8 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [settings, setSettings] = useState<DumbEditorSettings>(() => structuredClone(DEFAULT_SETTINGS));
-  const [modelCatalogs, setModelCatalogs] = useState<ModelCatalogs>({});
-  const [modelFocus, setModelFocus] = useState<{ provider: ModelProvider; slot: OpenRouterSlot }>();
-  const [modelCatalogError, setModelCatalogError] = useState<string>();
+  const [modelPicker, setModelPicker] = useState<ModelPickerState>(initialModelPicker);
+  const modelRequest = useRef(0);
   const didOpenInitialPath = useRef(false);
 
   const busy = loader !== null;
@@ -141,70 +140,71 @@ export function App({ initialPath }: { initialPath?: string }) {
     finally { setLoader(null); }
   }, [answer, movePlayhead, project]);
 
-  const handleModelCommand = useCallback(async (argument: string) => {
-    const tokens = argument.split(/\s+/).filter(Boolean);
-    const provider = tokens[0]?.toLowerCase() as ModelProvider | undefined;
-    if (provider && provider !== "openai" && provider !== "openrouter") {
-      await answer("Usage: /model [openai [MODEL] | openrouter [text|image|audio|music|video] [MODEL]]");
-      return;
-    }
-    let slot: OpenRouterSlot = "text";
-    let requestedModel: string | undefined;
-    if (provider === "openai") requestedModel = tokens[1];
-    if (provider === "openrouter") {
-      const requestedSlot = tokens[1]?.toLowerCase();
-      if (requestedSlot && !OPENROUTER_SLOTS.includes(requestedSlot as OpenRouterSlot)) {
-        await answer("OpenRouter type must be text, image, audio, music, or video.");
-        return;
-      }
-      slot = requestedSlot as OpenRouterSlot || "text";
-      requestedModel = tokens[2];
-    }
-    if ((provider === "openai" && tokens.length > 2) || (provider === "openrouter" && tokens.length > 3)) {
-      await answer("Model IDs cannot contain spaces. Type /model for usage.");
-      return;
-    }
-
+  const openModelPicker = useCallback(() => {
+    modelRequest.current += 1;
+    setPlaying(false);
+    setModelPicker(initialModelPicker());
     setOverlay("model");
-    setModelFocus(provider ? { provider, slot } : undefined);
-    setModelCatalogError(undefined);
-    setLoader({ source: "Editor", stage: requestedModel ? "Checking provider model" : "Loading provider models" });
-    try {
-      if (provider && requestedModel) {
-        await assertProviderModel(provider, slot, requestedModel);
-        const next = await setDefaultModel(provider, slot, requestedModel);
-        setSettings(next);
-        await answer(`Default ${provider} ${slot} model set to ${requestedModel}.`);
-      }
+  }, []);
 
-      const targets: Array<{ provider: ModelProvider; slot: OpenRouterSlot }> = provider
-        ? provider === "openai"
-          ? [{ provider, slot: "text" }]
-          : requestedModel || tokens[1]
-            ? [{ provider, slot }]
-            : OPENROUTER_SLOTS.map((item) => ({ provider, slot: item }))
-        : [{ provider: "openai", slot: "text" }, ...OPENROUTER_SLOTS.map((item) => ({ provider: "openrouter" as const, slot: item }))];
-      const results = await Promise.allSettled(targets.map(async (target) => ({
-        target,
-        models: await listProviderModels(target.provider, target.slot),
-      })));
-      const failures: string[] = [];
-      for (const result of results) {
-        if (result.status === "rejected") failures.push(errorMessage(result.reason));
-        else {
-          const key = `${result.value.target.provider}:${result.value.target.slot}` as keyof ModelCatalogs;
-          setModelCatalogs((current) => ({ ...current, [key]: result.value.models }));
-        }
-      }
-      if (failures.length > 0) setModelCatalogError([...new Set(failures)].join(" · "));
+  const loadModelChoices = useCallback(async (provider: ModelProvider, slot: OpenRouterSlot) => {
+    const request = ++modelRequest.current;
+    setModelPicker({ step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: true, error: null });
+    setLoader({ source: "Editor", stage: `Loading ${provider} ${slot} models` });
+    try {
+      const models = await listProviderModels(provider, slot);
+      if (request !== modelRequest.current) return;
+      const current = provider === "openai" ? settings.models.openai.text : settings.models.openrouter[slot];
+      const selectedIndex = Math.max(0, models.findIndex((model) => model.id === current));
+      setModelPicker({ step: "models", provider, slot, models, query: "", selectedIndex, loading: false, error: null });
     } catch (error) {
-      const message = errorMessage(error);
-      setModelCatalogError(message);
-      await answer(message);
+      if (request !== modelRequest.current) return;
+      setModelPicker({ step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: false, error: errorMessage(error) });
+    } finally {
+      if (request === modelRequest.current) setLoader(null);
+    }
+  }, [settings]);
+
+  const chooseModelPickerItem = useCallback(async () => {
+    if (modelPicker.loading) return;
+    if (modelPicker.step === "provider") {
+      if (modelPicker.selectedIndex === 0) await loadModelChoices("openai", "text");
+      else setModelPicker({ ...initialModelPicker(), step: "slot", provider: "openrouter" });
+      return;
+    }
+    if (modelPicker.step === "slot") {
+      const slot = OPENROUTER_SLOTS[modelPicker.selectedIndex] ?? "text";
+      await loadModelChoices("openrouter", slot);
+      return;
+    }
+    if (!modelPicker.provider) return;
+    if (modelPicker.error) { await loadModelChoices(modelPicker.provider, modelPicker.slot); return; }
+    const selected = filteredPickerModels(modelPicker)[modelPicker.selectedIndex];
+    if (!selected) return;
+    setLoader({ source: "Editor", stage: "Saving model default" });
+    try {
+      const next = await setDefaultModel(modelPicker.provider, modelPicker.slot, selected.id);
+      setSettings(next);
+      setOverlay(null);
+      setStatus(`${selected.id} selected`);
+      await answer(`Default ${modelPicker.provider} ${modelPicker.slot} model set to ${selected.id}.`);
+    } catch (error) {
+      setModelPicker((current) => ({ ...current, error: errorMessage(error) }));
     } finally {
       setLoader(null);
     }
-  }, [answer]);
+  }, [answer, loadModelChoices, modelPicker]);
+
+  const backModelPicker = useCallback(() => {
+    modelRequest.current += 1;
+    setLoader(null);
+    if (modelPicker.step === "provider") { setOverlay(null); return; }
+    if (modelPicker.step === "slot" || modelPicker.provider === "openai") {
+      setModelPicker(initialModelPicker());
+      return;
+    }
+    setModelPicker({ ...initialModelPicker(), step: "slot", provider: "openrouter" });
+  }, [modelPicker]);
 
   const handleCommand = useCallback(async (line: string) => {
     const space = line.indexOf(" ");
@@ -216,7 +216,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/play") { if (media) setPlaying(true); return; }
     if (command === "/pause") { setCurrentTime(currentTimeRef.current); setPlaying(false); return; }
     if (command === "/open") { if (!argument) { await answer("Usage: /open <VIDEO PATH>"); return; } await openVideo(argument); return; }
-    if (command === "/model") { await handleModelCommand(argument); return; }
+    if (command === "/model") { openModelPicker(); return; }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
 
     const direct = parseEditCommand(line, { duration: media.duration, currentTime: currentTimeRef.current, selection });
@@ -253,7 +253,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       return;
     }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, handleModelCommand, media, openVideo, project, selection]);
+  }, [answer, applyEdit, changeVersion, exit, media, openModelPicker, openVideo, project, selection]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -280,6 +280,35 @@ export function App({ initialPath }: { initialPath?: string }) {
 
   useInput((character, key) => {
     if (key.ctrl && character === "c") { exit(); return; }
+    if (overlay === "model") {
+      if (key.escape || key.leftArrow) { backModelPicker(); return; }
+      if (modelPicker.loading || busy) return;
+      if (key.upArrow || key.downArrow || key.tab) {
+        setModelPicker((current) => {
+          const count = current.step === "provider" ? 2 : current.step === "slot" ? OPENROUTER_SLOTS.length : filteredPickerModels(current).length;
+          if (count === 0) return current;
+          const direction = key.upArrow ? -1 : 1;
+          return { ...current, selectedIndex: (current.selectedIndex + direction + count) % count };
+        });
+        return;
+      }
+      if (key.return || key.rightArrow) { void chooseModelPickerItem(); return; }
+      if (modelPicker.step === "models") {
+        if (key.backspace || key.delete) {
+          setModelPicker((current) => ({ ...current, query: current.query.slice(0, -1), selectedIndex: 0 }));
+          return;
+        }
+        if (key.ctrl && character === "a") {
+          setModelPicker((current) => ({ ...current, query: "", selectedIndex: 0 }));
+          return;
+        }
+        if (character && !key.ctrl && !key.meta && !key.tab) {
+          const text = character.replace(/[\r\n]+/g, " ");
+          setModelPicker((current) => ({ ...current, query: current.query + text, selectedIndex: 0 }));
+        }
+      }
+      return;
+    }
     if (key.escape) { if (overlay) setOverlay(null); else { setInput(""); setInputCursor(0); } return; }
     if (busy) return;
     if (key.tab && suggestions.length > 0) {
@@ -319,8 +348,8 @@ export function App({ initialPath }: { initialPath?: string }) {
       <Box justifyContent="space-between"><Text bold color="magenta">DumbEditor</Text><Text dimColor>{project ? `${basename(project.snapshot.sourcePath)} · ${project.current.id}` : "No video"}</Text></Box>
       <Box height={layout.playerRows} minHeight={layout.playerRows} flexDirection="row">
         {overlay === "help" ? <Help /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} />
-          : overlay === "model" ? <ModelPanel settings={settings} catalogs={modelCatalogs} keys={providerKeyStatus()} height={layout.playerRows}
-            {...(modelFocus ? { focus: modelFocus } : {})} {...(modelCatalogError ? { error: modelCatalogError } : {})} />
+          : overlay === "model" ? <ModelPanel picker={modelPicker} settings={settings} keys={providerKeyStatus()}
+            width={terminal.columns - 2} height={layout.playerRows} />
           : <>
             {layout.leftSidebarColumns > 0 && <VersionsSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""} width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
@@ -346,7 +375,9 @@ export function App({ initialPath }: { initialPath?: string }) {
         ))}
       </Box>
       <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1}>
-        {loader ? <Text color="yellow">{SPINNER[spinnerFrame]} {loader.source} · {loader.stage}</Text> : <><Text color="cyan">› </Text><Text>{input.slice(0, inputCursor)}</Text><Text inverse>{input[inputCursor] ?? " "}</Text><Text>{input.slice(inputCursor + (inputCursor < input.length ? 1 : 0))}</Text></>}
+        {loader ? <Text color="yellow">{SPINNER[spinnerFrame]} {loader.source} · {loader.stage}</Text>
+          : overlay === "model" ? <Text color="cyan">Model picker active · use the keyboard in the popup</Text>
+            : <><Text color="cyan">› </Text><Text>{input.slice(0, inputCursor)}</Text><Text inverse>{input[inputCursor] ?? " "}</Text><Text>{input.slice(inputCursor + (inputCursor < input.length ? 1 : 0))}</Text></>}
       </Box>
       <Text dimColor>{loader ? `${loader.source} is working · please wait` : `${status} · ${settings.models.openai.text} · Enter to send · Ctrl+C to quit`}</Text>
     </Box>

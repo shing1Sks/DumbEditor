@@ -79,8 +79,6 @@ Type `/` to open the command menu. Use `↑` and `↓` to choose, then `Tab` or 
 /undo
 /export <OUTPUT PATH>
 /model
-/model openai [MODEL]
-/model openrouter [text|image|audio|music|video] [MODEL]
 /status
 /play
 /pause
@@ -93,7 +91,7 @@ Direct time arguments accept seconds, `mm:ss`, `hh:mm:ss`, `start`, `end`, `play
 
 `/version-limits` reports the current retention limit. `/version-limits 10` keeps the ten newest rendered edits plus the original source. The default is five. Pruned renders are removed from the project directory while the source is always preserved.
 
-`/model` opens both provider sections. `/model openai` lists available OpenAI editor models. `/model openrouter image` lists the current image-capable OpenRouter models; the same form accepts `text`, `audio`, `music`, or `video`. Add a model ID to save it as that capability's default. OpenRouter execution will be added with the workflows that use those capabilities.
+`/model` opens a keyboard modal. Choose OpenAI or OpenRouter, choose an OpenRouter capability when needed, then type to search the provider's current catalog. Use `↑` and `↓` to move, `Enter` to select, and `Esc` to go back. OpenRouter execution will be added with the workflows that use those capabilities.
 
 ## Controls
 
