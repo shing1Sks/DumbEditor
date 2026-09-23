@@ -35,6 +35,26 @@ export function filteredPickerModels(picker: ModelPickerState): ProviderModel[] 
   return picker.models.filter((model) => `${model.name} ${model.id}`.toLowerCase().includes(query));
 }
 
+export function modelPricePresentation(provider: ModelProvider | null, slot: OpenRouterSlot): {
+  first: string;
+  second: string;
+  note: string;
+} {
+  if (provider === "openrouter" && slot === "image") {
+    return { first: "INPUT RATE", second: "OUTPUT RATE", note: "Image rates show their billing unit; ranges cover provider variants." };
+  }
+  if (provider === "openrouter" && slot === "audio") {
+    return { first: "INPUT RATE", second: "OUTPUT RATE", note: "Audio rates show whether billing uses tokens or input characters." };
+  }
+  if (provider === "openrouter" && slot === "music") {
+    return { first: "PRICE", second: "BASIS", note: "Music prices are per generated song or clip." };
+  }
+  if (provider === "openrouter" && slot === "video") {
+    return { first: "FROM", second: "UP TO", note: "Video rates vary by resolution, audio, input type, and generation mode." };
+  }
+  return { first: "INPUT / 1M", second: "OUTPUT / 1M", note: "Token prices are USD per 1M tokens." };
+}
+
 export function ModelPanel(props: {
   picker: ModelPickerState;
   settings: DumbEditorSettings;
@@ -97,6 +117,7 @@ function ModelChoices({ picker, settings, height, width }: { picker: ModelPicker
   const room = Math.max(3, height - 6);
   const start = Math.min(Math.max(0, picker.selectedIndex - room + 1), Math.max(0, models.length - room));
   const current = picker.provider === "openai" ? settings.models.openai.text : settings.models.openrouter[picker.slot];
+  const price = modelPricePresentation(picker.provider, picker.slot);
   return <Box flexDirection="column" marginTop={1}>
     <Box borderStyle="round" borderColor="gray" paddingX={1}>
       <Text color="cyan">Search › </Text><Text>{picker.query}</Text><Text inverse> </Text>
@@ -105,20 +126,20 @@ function ModelChoices({ picker, settings, height, width }: { picker: ModelPicker
       : picker.error ? <><Text color="yellow" wrap="truncate-end">{picker.error}</Text><Text dimColor>Press Enter to retry.</Text></>
         : models.length === 0 ? <Text dimColor>No models match “{picker.query}”.</Text>
           : <>
-            <ModelColumns width={width} />
+            <ModelColumns width={width} first={price.first} second={price.second} />
             {models.slice(start, start + room).map((model, offset) => (
               <ModelChoice key={model.id} model={model} current={model.id === current}
                 selected={start + offset === picker.selectedIndex} width={width} />
             ))}
           </>}
     {!picker.loading && !picker.error && <Text dimColor>{models.length} models{models.length > room ? ` · showing ${start + 1}-${Math.min(start + room, models.length)}` : ""}</Text>}
-    {!picker.loading && !picker.error && models.length > 0 && <Text dimColor>Token prices per 1M unless another unit is shown.</Text>}
+    {!picker.loading && !picker.error && models.length > 0 && <Text dimColor>{price.note}</Text>}
   </Box>;
 }
 
-function ModelColumns({ width }: { width: number }) {
+function ModelColumns({ width, first, second }: { width: number; first: string; second: string }) {
   const columns = columnWidths(width);
-  return <Text dimColor>{`  ${cell("MODEL", columns.model)} ${cell("INPUT", columns.price)} ${cell("OUTPUT", columns.price)}`}</Text>;
+  return <Text dimColor>{`  ${cell("MODEL", columns.model)} ${cell(first, columns.price)} ${cell(second, columns.price)}`}</Text>;
 }
 
 function ModelChoice({ model, current, selected, width }: {
@@ -134,7 +155,7 @@ function ModelChoice({ model, current, selected, width }: {
 }
 
 function columnWidths(width: number): { model: number; price: number } {
-  const price = width >= 54 ? 12 : 8;
+  const price = width >= 80 ? 18 : width >= 54 ? 12 : 8;
   return { model: Math.max(8, width - (price * 2) - 4), price };
 }
 

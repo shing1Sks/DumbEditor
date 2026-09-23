@@ -91,7 +91,7 @@ Direct time arguments accept seconds, `mm:ss`, `hh:mm:ss`, `start`, `end`, `play
 
 `/version-limits` reports the current retention limit. `/version-limits 10` keeps the ten newest rendered edits plus the original source. The default is five. Pruned renders are removed from the project directory while the source is always preserved.
 
-`/model` opens a keyboard modal at the top of each list. Choose OpenAI or OpenRouter, choose an OpenRouter capability when needed, then type to search the provider's current catalog. The model table shows input and output prices per one million tokens when available; media models may use another unit shown in the price. Use `↑` and `↓` to move, `Enter` to select, and `Esc` to go back. OpenRouter execution will be added with the workflows that use those capabilities.
+`/model` opens a keyboard modal at the top of each list. Choose OpenAI or OpenRouter, choose an OpenRouter capability when needed, then type to search the provider's current catalog. Text models show input and output prices per one million tokens. Audio distinguishes token and character rates; image shows endpoint rates per image, megapixel, token, or request; music shows its per-song or per-clip price; video shows the live SKU range and its billing unit. Use `↑` and `↓` to move, `Enter` to select, and `Esc` to go back. OpenRouter execution will be added with the workflows that use those capabilities.
 
 ## Controls
 
