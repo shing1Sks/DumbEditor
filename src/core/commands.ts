@@ -19,6 +19,7 @@ export const COMMANDS: CommandDefinition[] = [
   { name: "/revert", usage: "/revert <VERSION>", description: "Switch to a saved version" },
   { name: "/undo", usage: "/undo", description: "Go to the parent version" },
   { name: "/export", usage: "/export <OUTPUT PATH>", description: "Export the active version" },
+  { name: "/bg-music", usage: "/bg-music [QUERY]", description: "Browse open-license background music" },
   { name: "/model", usage: "/model", description: "Open the provider and model picker" },
   { name: "/status", usage: "/status", description: "Show project details" },
   { name: "/play", usage: "/play", description: "Play the preview" },

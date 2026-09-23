@@ -9,6 +9,7 @@ test("discovers slash commands by prefix", () => {
   assert.ok(commandSuggestions("/").length > 6);
   assert.ok(commandSuggestions("/").some((item) => item.name === "/model"));
   assert.ok(commandSuggestions("/").some((item) => item.name === "/version-limits"));
+  assert.ok(commandSuggestions("/").some((item) => item.name === "/bg-music"));
   assert.equal(commandSuggestions("normal request").length, 0);
 });
 
