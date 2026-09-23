@@ -10,4 +10,13 @@ test("sizes the player from video aspect ratio and gives remaining rows to chat"
   assert.ok(layout.playerRows >= 26 && layout.playerRows <= 29);
   assert.equal(layout.playerRows + layout.chatRows, 41);
   assert.ok(layout.chatRows >= 4);
+  assert.equal(layout.leftSidebarColumns, 0);
+  assert.equal(layout.videoColumns + layout.leftSidebarColumns + layout.rightSidebarColumns, 98);
+});
+
+test("uses wide terminal margins as balanced sidebars", () => {
+  const layout = editorLayout({ columns: 190, rows: 52 }, media, "sixel");
+  assert.ok(layout.leftSidebarColumns >= 18);
+  assert.equal(layout.leftSidebarColumns, layout.rightSidebarColumns);
+  assert.equal(layout.videoColumns + layout.leftSidebarColumns + layout.rightSidebarColumns, 188);
 });

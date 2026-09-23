@@ -4,20 +4,25 @@ import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { ChildProcess } from "node:child_process";
 import type { ChatMessage, DirectEdit, MediaInfo, Selection } from "../types.js";
 import { commandSuggestions, parseEditCommand } from "../core/commands.js";
+import { providerKeyStatus } from "../core/config.js";
 import { executeDirectEdit } from "../core/editor.js";
-import { askLuna } from "../core/luna.js";
+import { askOpenAI } from "../core/openai.js";
 import { playAudio, probeMedia } from "../core/media.js";
+import { assertProviderModel, listProviderModels } from "../core/models.js";
 import { ProjectStore } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
+import { DEFAULT_SETTINGS, OPENROUTER_SLOTS, readSettings, setDefaultModel, type DumbEditorSettings, type ModelProvider, type OpenRouterSlot } from "../core/settings.js";
 import { formatTime } from "../core/time.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { editorLayout } from "./layout.js";
+import { ModelPanel, type ModelCatalogs } from "./ModelPanel.js";
+import { SessionSidebar, VersionsSidebar } from "./Sidebars.js";
 import { Timeline } from "./Timeline.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
-type Overlay = "help" | "history" | null;
-interface LoaderState { source: "Luna" | "Command" | "Editor"; stage: string }
+type Overlay = "help" | "history" | "model" | null;
+interface LoaderState { source: "OpenAI" | "Command" | "Editor"; stage: string }
 const SPINNER = ["◐", "◓", "◑", "◒"];
 
 export function App({ initialPath }: { initialPath?: string }) {
@@ -41,6 +46,10 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [status, setStatus] = useState("Ready");
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const [settings, setSettings] = useState<DumbEditorSettings>(() => structuredClone(DEFAULT_SETTINGS));
+  const [modelCatalogs, setModelCatalogs] = useState<ModelCatalogs>({});
+  const [modelFocus, setModelFocus] = useState<{ provider: ModelProvider; slot: OpenRouterSlot }>();
+  const [modelCatalogError, setModelCatalogError] = useState<string>();
   const didOpenInitialPath = useRef(false);
 
   const busy = loader !== null;
@@ -56,6 +65,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   }, [busy]);
   useEffect(() => { setSuggestionIndex(0); }, [input]);
   useEffect(() => () => terminateRunningProcesses(), []);
+  useEffect(() => { void readSettings().then(setSettings).catch((error) => setStatus(errorMessage(error))); }, []);
   useEffect(() => {
     const onResize = () => setTerminal({ columns: stdout.columns ?? 100, rows: stdout.rows ?? 36 });
     stdout.on("resize", onResize);
@@ -131,6 +141,71 @@ export function App({ initialPath }: { initialPath?: string }) {
     finally { setLoader(null); }
   }, [answer, movePlayhead, project]);
 
+  const handleModelCommand = useCallback(async (argument: string) => {
+    const tokens = argument.split(/\s+/).filter(Boolean);
+    const provider = tokens[0]?.toLowerCase() as ModelProvider | undefined;
+    if (provider && provider !== "openai" && provider !== "openrouter") {
+      await answer("Usage: /model [openai [MODEL] | openrouter [text|image|audio|music|video] [MODEL]]");
+      return;
+    }
+    let slot: OpenRouterSlot = "text";
+    let requestedModel: string | undefined;
+    if (provider === "openai") requestedModel = tokens[1];
+    if (provider === "openrouter") {
+      const requestedSlot = tokens[1]?.toLowerCase();
+      if (requestedSlot && !OPENROUTER_SLOTS.includes(requestedSlot as OpenRouterSlot)) {
+        await answer("OpenRouter type must be text, image, audio, music, or video.");
+        return;
+      }
+      slot = requestedSlot as OpenRouterSlot || "text";
+      requestedModel = tokens[2];
+    }
+    if ((provider === "openai" && tokens.length > 2) || (provider === "openrouter" && tokens.length > 3)) {
+      await answer("Model IDs cannot contain spaces. Type /model for usage.");
+      return;
+    }
+
+    setOverlay("model");
+    setModelFocus(provider ? { provider, slot } : undefined);
+    setModelCatalogError(undefined);
+    setLoader({ source: "Editor", stage: requestedModel ? "Checking provider model" : "Loading provider models" });
+    try {
+      if (provider && requestedModel) {
+        await assertProviderModel(provider, slot, requestedModel);
+        const next = await setDefaultModel(provider, slot, requestedModel);
+        setSettings(next);
+        await answer(`Default ${provider} ${slot} model set to ${requestedModel}.`);
+      }
+
+      const targets: Array<{ provider: ModelProvider; slot: OpenRouterSlot }> = provider
+        ? provider === "openai"
+          ? [{ provider, slot: "text" }]
+          : requestedModel || tokens[1]
+            ? [{ provider, slot }]
+            : OPENROUTER_SLOTS.map((item) => ({ provider, slot: item }))
+        : [{ provider: "openai", slot: "text" }, ...OPENROUTER_SLOTS.map((item) => ({ provider: "openrouter" as const, slot: item }))];
+      const results = await Promise.allSettled(targets.map(async (target) => ({
+        target,
+        models: await listProviderModels(target.provider, target.slot),
+      })));
+      const failures: string[] = [];
+      for (const result of results) {
+        if (result.status === "rejected") failures.push(errorMessage(result.reason));
+        else {
+          const key = `${result.value.target.provider}:${result.value.target.slot}` as keyof ModelCatalogs;
+          setModelCatalogs((current) => ({ ...current, [key]: result.value.models }));
+        }
+      }
+      if (failures.length > 0) setModelCatalogError([...new Set(failures)].join(" · "));
+    } catch (error) {
+      const message = errorMessage(error);
+      setModelCatalogError(message);
+      await answer(message);
+    } finally {
+      setLoader(null);
+    }
+  }, [answer]);
+
   const handleCommand = useCallback(async (line: string) => {
     const space = line.indexOf(" ");
     const command = (space === -1 ? line : line.slice(0, space)).toLowerCase();
@@ -141,6 +216,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/play") { if (media) setPlaying(true); return; }
     if (command === "/pause") { setCurrentTime(currentTimeRef.current); setPlaying(false); return; }
     if (command === "/open") { if (!argument) { await answer("Usage: /open <VIDEO PATH>"); return; } await openVideo(argument); return; }
+    if (command === "/model") { await handleModelCommand(argument); return; }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
 
     const direct = parseEditCommand(line, { duration: media.duration, currentTime: currentTimeRef.current, selection });
@@ -155,7 +231,13 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (argument && argument.toLowerCase() !== "all") { await answer("Usage: /version [all]"); return; }
       setShowAllHistory(argument.toLowerCase() === "all"); setOverlay("history"); return;
     }
-    if (command === "/status") { await answer(`${project.current.id} · ${media.width}x${media.height} · ${formatTime(media.duration)} · ${project.snapshot.versions.length} versions`); return; }
+    if (command === "/version-limits") {
+      if (!argument) { await answer(`Keeping up to ${project.versionLimit} rendered edit versions, plus the original source.`); return; }
+      const limit = Number(argument);
+      await project.setVersionLimit(limit); setRevision((value) => value + 1);
+      await answer(`Version limit set to ${limit}. Older rendered versions were pruned.`); return;
+    }
+    if (command === "/status") { await answer(`${project.current.id} · ${media.width}x${media.height} · ${formatTime(media.duration)} · ${project.snapshot.versions.length} versions · limit ${project.versionLimit}`); return; }
     if (command === "/undo") {
       const parent = project.current.parentId;
       if (!parent) { await answer("Already at the original version."); return; }
@@ -171,7 +253,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       return;
     }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, media, openVideo, project, selection]);
+  }, [answer, applyEdit, changeVersion, exit, handleModelCommand, media, openVideo, project, selection]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -185,14 +267,14 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (request.startsWith("/")) { try { await handleCommand(request); } catch (error) { await answer(errorMessage(error)); } return; }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
 
-    setPlaying(false); setLoader({ source: "Luna", stage: "Understanding your request" });
+    setPlaying(false); setLoader({ source: "OpenAI", stage: "Understanding your request" });
     try {
       const priorHistory = await project.chatHistory(); await project.addChat("user", request);
-      const decision = await askLuna({ request, duration: media.duration, currentTime: currentTimeRef.current, selection, history: priorHistory });
+      const decision = await askOpenAI({ request, duration: media.duration, currentTime: currentTimeRef.current, selection, history: priorHistory });
       if (decision.kind === "message") {
-        setLoader({ source: "Luna", stage: "Writing response" }); await answer(decision.message); setStatus(`Luna · ${decision.model}`);
-      } else { await applyEdit(decision.edit, request, "Luna"); setStatus(`Luna · ${decision.model} · complete`); }
-    } catch (error) { await answer(errorMessage(error)); setStatus("Luna request failed"); }
+        setLoader({ source: "OpenAI", stage: "Writing response" }); await answer(decision.message); setStatus(decision.model);
+      } else { await applyEdit(decision.edit, request, "OpenAI"); setStatus(`${decision.model} · complete`); }
+    } catch (error) { await answer(errorMessage(error)); setStatus("OpenAI request failed"); }
     finally { setLoader(null); }
   }, [addUiMessage, answer, applyEdit, busy, handleCommand, input, media, project, selection, suggestionIndex, suggestions]);
 
@@ -224,17 +306,30 @@ export function App({ initialPath }: { initialPath?: string }) {
   });
 
   const visibleMessages = messages.slice(-layout.chatRows);
-  const versions = project?.history(showAllHistory ? project.snapshot.versions.length : 8) ?? [];
-  void revision;
+  const versions = useMemo(() => project?.history(showAllHistory ? project.snapshot.versions.length : 8) ?? [], [project, revision, showAllHistory]);
+  const sidebarVersions = useMemo(() => project?.history(Number.POSITIVE_INFINITY) ?? [], [project, revision]);
+  const suggestionCapacity = Math.max(1, layout.chatRows);
+  const suggestionStart = Math.min(
+    Math.max(0, suggestionIndex - suggestionCapacity + 1),
+    Math.max(0, suggestions.length - suggestionCapacity),
+  );
+  const visibleSuggestions = suggestions.slice(suggestionStart, suggestionStart + suggestionCapacity);
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between"><Text bold color="magenta">DumbEditor</Text><Text dimColor>{project ? `${basename(project.snapshot.sourcePath)} · ${project.current.id}` : "No video"}</Text></Box>
-      <Box height={layout.playerRows} minHeight={layout.playerRows} flexDirection="column">
-        {overlay === "help" ? <Help /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} /> : (
-          <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
-            columns={terminal.columns - 2} rows={layout.playerRows} topRow={2} selection={selection}
-            onTime={updatePreviewTime} onEnd={() => setPlaying(false)} onError={(error) => { setStatus(`Preview unavailable: ${error.message}`); setPlaying(false); }} />
-        )}
+      <Box height={layout.playerRows} minHeight={layout.playerRows} flexDirection="row">
+        {overlay === "help" ? <Help /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} />
+          : overlay === "model" ? <ModelPanel settings={settings} catalogs={modelCatalogs} keys={providerKeyStatus()} height={layout.playerRows}
+            {...(modelFocus ? { focus: modelFocus } : {})} {...(modelCatalogError ? { error: modelCatalogError } : {})} />
+          : <>
+            {layout.leftSidebarColumns > 0 && <VersionsSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""} width={layout.leftSidebarColumns} height={layout.playerRows} />}
+            <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
+              columns={layout.videoColumns} rows={layout.playerRows} topRow={2} leftColumn={2 + layout.leftSidebarColumns}
+              timelineColumns={terminal.columns} selection={selection}
+              onTime={updatePreviewTime} onEnd={() => setPlaying(false)} onError={(error) => { setStatus(`Preview unavailable: ${error.message}`); setPlaying(false); }} />
+            {layout.rightSidebarColumns > 0 && <SessionSidebar media={media} selection={selection} versionLimit={project?.versionLimit ?? 5}
+              model={settings.models.openai.text} width={layout.rightSidebarColumns} height={layout.playerRows} />}
+          </>}
       </Box>
       <Box height={1} minHeight={1}>{media ? <Timeline current={currentTime} duration={media.duration} selection={selection} width={terminal.columns} /> : <Text> </Text>}</Box>
       <Box height={1} minHeight={1} justifyContent="space-between">
@@ -242,9 +337,9 @@ export function App({ initialPath }: { initialPath?: string }) {
         <Text dimColor>{previewBackend.toUpperCase()} · ←/→ 5s · [ ] marks · / commands</Text>
       </Box>
       <Box flexDirection="column" height={layout.chatRows} minHeight={layout.chatRows}>
-        {suggestions.length > 0 ? suggestions.slice(0, layout.chatRows).map((command, index) => (
-          <Text key={command.name} {...(index === suggestionIndex ? { color: "cyan" as const, inverse: true } : {})} wrap="truncate-end">
-            {index === suggestionIndex ? "› " : "  "}{command.usage}  <Text dimColor>{command.description}</Text>
+        {suggestions.length > 0 ? visibleSuggestions.map((command, offset) => (
+          <Text key={command.name} {...(suggestionStart + offset === suggestionIndex ? { color: "cyan" as const, inverse: true } : {})} wrap="truncate-end">
+            {suggestionStart + offset === suggestionIndex ? "› " : "  "}{command.usage}  <Text dimColor>{command.description}</Text>
           </Text>
         )) : visibleMessages.map((message, index) => (
           <Text key={`${message.at}-${index}`} wrap="truncate-end"><Text color={message.role === "user" ? "cyan" : "magenta"}>{message.role === "user" ? "you" : "dumb"} › </Text>{message.content}</Text>
@@ -253,7 +348,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1}>
         {loader ? <Text color="yellow">{SPINNER[spinnerFrame]} {loader.source} · {loader.stage}</Text> : <><Text color="cyan">› </Text><Text>{input.slice(0, inputCursor)}</Text><Text inverse>{input[inputCursor] ?? " "}</Text><Text>{input.slice(inputCursor + (inputCursor < input.length ? 1 : 0))}</Text></>}
       </Box>
-      <Text dimColor>{loader ? `${loader.source} is working · please wait` : `${status} · GPT-6 Luna · Enter to send · Ctrl+C to quit`}</Text>
+      <Text dimColor>{loader ? `${loader.source} is working · please wait` : `${status} · ${settings.models.openai.text} · Enter to send · Ctrl+C to quit`}</Text>
     </Box>
   );
 }

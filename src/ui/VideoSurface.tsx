@@ -25,6 +25,8 @@ export function VideoSurface(props: {
   columns: number;
   rows: number;
   topRow?: number;
+  leftColumn?: number;
+  timelineColumns?: number;
   selection: Selection;
   onTime: (time: number, force: boolean) => void;
   onEnd: () => void;
@@ -44,19 +46,20 @@ export function VideoSurface(props: {
     rows: props.rows,
     size,
     topRow: props.topRow ?? 2,
+    leftColumn: props.leftColumn ?? 1,
   });
-  layoutRef.current = { backend, columns: props.columns, rows: props.rows, size, topRow: props.topRow ?? 2 };
+  layoutRef.current = { backend, columns: props.columns, rows: props.rows, size, topRow: props.topRow ?? 2, leftColumn: props.leftColumn ?? 1 };
   const lastFrame = useRef("");
   const lastTime = useRef(props.time);
   const lastTimelinePaint = useRef(0);
   const timelineRef = useRef({
-    columns: props.columns,
+    columns: props.timelineColumns ?? props.columns,
     duration: props.media?.duration ?? 0,
     row: (props.topRow ?? 2) + props.rows,
     selection: props.selection,
   });
   timelineRef.current = {
-    columns: props.columns,
+    columns: props.timelineColumns ?? props.columns,
     duration: props.media?.duration ?? 0,
     row: (props.topRow ?? 2) + props.rows,
     selection: props.selection,
@@ -72,7 +75,7 @@ export function VideoSurface(props: {
     const imageColumns = layout.backend === "sixel"
       ? Math.ceil(layout.size.width / cellWidth)
       : layout.size.width;
-    const column = Math.max(1, Math.floor((layout.columns - imageColumns) / 2) + 1);
+    const column = layout.leftColumn + Math.max(0, Math.floor((layout.columns - imageColumns) / 2));
     let output = "\u001B7\u001B[?25l";
     if (layout.backend === "sixel") {
       output += `\u001B[${layout.topRow};${column}H${encoded}`;
@@ -124,10 +127,10 @@ export function VideoSurface(props: {
   }, []);
 
   useEffect(() => {
-    clearSurface(stdout, layoutRef.current.topRow, layoutRef.current.rows);
+    clearSurface(stdout, layoutRef.current.topRow, layoutRef.current.rows, layoutRef.current.leftColumn, layoutRef.current.columns);
     lastFrame.current = "";
-    return () => clearSurface(stdout, layoutRef.current.topRow, layoutRef.current.rows);
-  }, [backend, props.columns, props.rows, size.height, size.width, stdout]);
+    return () => clearSurface(stdout, layoutRef.current.topRow, layoutRef.current.rows, layoutRef.current.leftColumn, layoutRef.current.columns);
+  }, [backend, props.columns, props.leftColumn, props.rows, size.height, size.width, stdout]);
 
   useEffect(() => {
     if (!props.filePath || !props.media || size.width === 0 || size.height === 0) return;
@@ -181,7 +184,7 @@ export function VideoSurface(props: {
   });
 
   return (
-    <Box height={props.rows} minHeight={props.rows} justifyContent="center" alignItems="center">
+    <Box width={props.columns} height={props.rows} minHeight={props.rows} flexShrink={0} justifyContent="center" alignItems="center">
       {!props.filePath && <Text dimColor>No video loaded</Text>}
     </Box>
   );
@@ -191,9 +194,10 @@ export function activePreviewBackend(): PreviewBackend {
   return detectPreviewBackend();
 }
 
-function clearSurface(stdout: NodeJS.WriteStream, topRow: number, rows: number): void {
+function clearSurface(stdout: NodeJS.WriteStream, topRow: number, rows: number, leftColumn: number, columns: number): void {
   let output = "\u001B7";
-  for (let index = 0; index < rows; index += 1) output += `\u001B[${topRow + index};1H\u001B[2K`;
+  const blank = " ".repeat(Math.max(0, columns));
+  for (let index = 0; index < rows; index += 1) output += `\u001B[${topRow + index};${leftColumn}H${blank}`;
   output += "\u001B8";
   stdout.write(output);
 }

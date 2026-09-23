@@ -6,6 +6,9 @@ const context = { duration: 100, currentTime: 12, selection: { in: 4, out: 9 } }
 
 test("discovers slash commands by prefix", () => {
   assert.deepEqual(commandSuggestions("/clip").map((item) => item.name), ["/clip-remove", "/clip-keep"]);
+  assert.ok(commandSuggestions("/").length > 6);
+  assert.ok(commandSuggestions("/").some((item) => item.name === "/model"));
+  assert.ok(commandSuggestions("/").some((item) => item.name === "/version-limits"));
   assert.equal(commandSuggestions("normal request").length, 0);
 });
 

@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { appendFile, copyFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ChatMessage, ProjectState, VersionEntry } from "../types.js";
 import { probeMedia } from "./media.js";
 
 const STATE_FILE = "project.json";
 const CHAT_FILE = "chat.jsonl";
+export const DEFAULT_VERSION_LIMIT = 5;
 
 export class ProjectStore {
   private constructor(private state: ProjectState) {}
@@ -23,6 +24,7 @@ export class ProjectStore {
     try {
       const state = JSON.parse(await readFile(statePath, "utf8")) as ProjectState;
       if (state.schemaVersion !== 1 || resolve(state.sourcePath) !== absoluteSource) throw new Error("Project state does not match source");
+      state.versionLimit = normalizeVersionLimit(state.versionLimit);
       return new ProjectStore(state);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
@@ -45,6 +47,7 @@ export class ProjectStore {
       currentVersionId: first.id,
       nextVersion: 1,
       createdAt: new Date().toISOString(),
+      versionLimit: DEFAULT_VERSION_LIMIT,
       versions: [first],
     };
     const store = new ProjectStore(state);
@@ -60,6 +63,10 @@ export class ProjectStore {
     const version = this.state.versions.find((item) => item.id === this.state.currentVersionId);
     if (!version) throw new Error("Current version is missing from project history");
     return version;
+  }
+
+  get versionLimit(): number {
+    return normalizeVersionLimit(this.state.versionLimit);
   }
 
   nextOutputPath(extension = ".mp4"): string {
@@ -88,8 +95,17 @@ export class ProjectStore {
     this.state.versions.push(entry);
     this.state.currentVersionId = id;
     this.state.nextVersion += 1;
+    await this.pruneVersions();
     await this.save();
     return entry;
+  }
+
+  async setVersionLimit(limit: number): Promise<number> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Version limit must be a whole number from 1 to 100.");
+    this.state.versionLimit = limit;
+    await this.pruneVersions();
+    await this.save();
+    return limit;
   }
 
   async revert(reference: string): Promise<VersionEntry> {
@@ -141,7 +157,41 @@ export class ProjectStore {
     return `v${String(value).padStart(4, "0")}`;
   }
 
+  private async pruneVersions(): Promise<void> {
+    const original = this.state.versions.find((version) => version.parentId === null) ?? this.state.versions[0];
+    if (!original) return;
+    const edits = this.state.versions.filter((version) => version.id !== original.id);
+    if (edits.length <= this.versionLimit) return;
+
+    const keepIds = new Set<string>();
+    if (this.state.currentVersionId !== original.id) keepIds.add(this.state.currentVersionId);
+    for (let index = edits.length - 1; index >= 0 && keepIds.size < this.versionLimit; index -= 1) {
+      const version = edits[index];
+      if (version) keepIds.add(version.id);
+    }
+    const kept = edits.filter((version) => keepIds.has(version.id));
+    const removed = edits.filter((version) => !keepIds.has(version.id));
+    const retainedIds = new Set([original.id, ...kept.map((version) => version.id)]);
+    for (const version of kept) if (version.parentId && !retainedIds.has(version.parentId)) version.parentId = original.id;
+    this.state.versions = [original, ...kept];
+    await Promise.all(removed.map((version) => this.removeVersionFile(version.filePath)));
+  }
+
+  private async removeVersionFile(filePath: string): Promise<void> {
+    const versionsDirectory = resolve(this.state.projectDir, "versions");
+    const output = resolve(filePath);
+    const childPath = relative(versionsDirectory, output);
+    if (!childPath || childPath.startsWith("..") || isAbsolute(childPath)) return;
+    await unlink(output).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+
   private async save(): Promise<void> {
     await writeFile(join(this.state.projectDir, STATE_FILE), `${JSON.stringify(this.state, null, 2)}\n`, "utf8");
   }
+}
+
+function normalizeVersionLimit(value: unknown): number {
+  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 100 ? Number(value) : DEFAULT_VERSION_LIMIT;
 }

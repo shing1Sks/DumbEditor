@@ -12,9 +12,10 @@ DumbEditor turns ordinary language into small, reversible FFmpeg edits. GPT-6 Lu
 - Play, pause, five second seeking, preview audio, and volume controls
 - Plain language removal, trimming, speed, mute, and crop requests through GPT-6 Luna
 - Discoverable slash command menu with keyboard selection and completion
+- Wide-screen version and session sidebars around the video preview
 - Progress indicators for AI interpretation, FFmpeg rendering, output checks, and version saving
-- Immutable version history with undo, revert, branching, and export
-- Optional JEV configuration reserved for later routing modes
+- Version history with undo, revert, branching, export, and configurable retention
+- OpenAI and OpenRouter model defaults backed by each provider's live catalog
 
 ## Requirements
 
@@ -30,6 +31,7 @@ npm install
 npm run build
 npm link
 
+dumbeditor
 dumbeditor setup
 dumbeditor video.mp4
 ```
@@ -40,9 +42,11 @@ During development:
 npm run dev -- video.mp4
 ```
 
-`dumbeditor setup` asks for an OpenAI key using hidden terminal input. It stores the key in `~/.dumbeditor/.env`. The setup-managed user config takes precedence, followed by a current-directory `.env` and the package-local development `.env`. All `.env` files are excluded from Git.
+Running `dumbeditor` without arguments prints a clean project overview. On the first launch it also explains the problem DumbEditor is built to solve and the two commands needed to begin. `dumbeditor --help` prints the complete CLI, editor command, control, time format, and example reference.
 
-The default model is `gpt-6-luna`. Set `OPENAI_MODEL` if you want to use another compatible model.
+`dumbeditor setup` asks for a required OpenAI key and an optional OpenRouter key using hidden terminal input. It stores keys in `~/.dumbeditor/.env`. Model choices are stored separately in `~/.dumbeditor/settings.json`. The setup-managed user config takes precedence, followed by a current-directory `.env` and the package-local development `.env`. All `.env` files are excluded from Git.
+
+The editor model defaults to `gpt-6-luna`. Use `/model` inside the editor to view OpenAI and OpenRouter defaults, load the providers' current model catalogs, and select another model.
 
 ## Natural language editing
 
@@ -70,9 +74,13 @@ Type `/` to open the command menu. Use `↑` and `↓` to choose, then `Tab` or 
 /crop <WIDTH>x<HEIGHT> [X,Y]
 /open <VIDEO PATH>
 /version [all]
+/version-limits [1-100]
 /revert <VERSION>
 /undo
 /export <OUTPUT PATH>
+/model
+/model openai [MODEL]
+/model openrouter [text|image|audio|music|video] [MODEL]
 /status
 /play
 /pause
@@ -82,6 +90,10 @@ Type `/` to open the command menu. Use `↑` and `↓` to choose, then `Tab` or 
 ```
 
 Direct time arguments accept seconds, `mm:ss`, `hh:mm:ss`, `start`, `end`, `playhead`, `in`, and `out`.
+
+`/version-limits` reports the current retention limit. `/version-limits 10` keeps the ten newest rendered edits plus the original source. The default is five. Pruned renders are removed from the project directory while the source is always preserved.
+
+`/model` opens both provider sections. `/model openai` lists available OpenAI editor models. `/model openrouter image` lists the current image-capable OpenRouter models; the same form accepts `text`, `audio`, `music`, or `video`. Add a model ID to save it as that capability's default. OpenRouter execution will be added with the workflows that use those capabilities.
 
 ## Controls
 
@@ -130,7 +142,7 @@ Each source gets a project directory beside it:
   versions/
 ```
 
-Reverting changes the active version pointer. Existing renders and descendants stay in history, so a new edit after a revert creates a branch.
+Reverting changes the active version pointer, so a new edit after a revert creates a branch. Retention keeps the original source and the configured number of rendered edits.
 
 ## Development
 

@@ -15,9 +15,11 @@ export const COMMANDS: CommandDefinition[] = [
   { name: "/crop", usage: "/crop <WIDTH>x<HEIGHT> [X,Y]", description: "Crop the frame" },
   { name: "/open", usage: "/open <VIDEO PATH>", description: "Open a video" },
   { name: "/version", usage: "/version [all]", description: "Show version history" },
+  { name: "/version-limits", usage: "/version-limits [1-100]", description: "Show or set retained edit versions" },
   { name: "/revert", usage: "/revert <VERSION>", description: "Switch to a saved version" },
   { name: "/undo", usage: "/undo", description: "Go to the parent version" },
   { name: "/export", usage: "/export <OUTPUT PATH>", description: "Export the active version" },
+  { name: "/model", usage: "/model [PROVIDER] [TYPE] [MODEL]", description: "View or set provider model defaults" },
   { name: "/status", usage: "/status", description: "Show project details" },
   { name: "/play", usage: "/play", description: "Play the preview" },
   { name: "/pause", usage: "/pause", description: "Pause the preview" },
@@ -29,7 +31,7 @@ export const COMMANDS: CommandDefinition[] = [
 export function commandSuggestions(input: string): CommandDefinition[] {
   if (!input.startsWith("/") || input.includes(" ")) return [];
   const query = input.toLowerCase();
-  return COMMANDS.filter((command) => command.name.startsWith(query)).slice(0, 6);
+  return COMMANDS.filter((command) => command.name.startsWith(query));
 }
 
 export function parseEditCommand(

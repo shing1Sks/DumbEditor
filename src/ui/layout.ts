@@ -4,6 +4,9 @@ import type { PreviewBackend } from "../core/media.js";
 export interface EditorLayout {
   playerRows: number;
   chatRows: number;
+  leftSidebarColumns: number;
+  videoColumns: number;
+  rightSidebarColumns: number;
 }
 
 export function editorLayout(
@@ -15,16 +18,20 @@ export function editorLayout(
   const available = Math.max(8, terminal.rows - fixedRows);
   const minimumChat = terminal.rows < 24 ? 2 : 4;
   const maximumPlayer = Math.max(6, available - minimumChat);
-  if (!media) return { playerRows: maximumPlayer, chatRows: minimumChat };
+  const contentColumns = Math.max(20, terminal.columns - 2);
+  const sidebarColumns = terminal.columns >= 130 ? clamp(Math.floor((contentColumns - 82) / 2), 18, 26) : 0;
+  const videoColumns = Math.max(20, contentColumns - sidebarColumns * 2);
+  const columns = { leftSidebarColumns: sidebarColumns, videoColumns, rightSidebarColumns: sidebarColumns };
+  if (!media) return { playerRows: maximumPlayer, chatRows: minimumChat, ...columns };
 
   const videoAspect = media.width / media.height;
   const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
   const cellHeight = positiveInteger(process.env.DUMBEDITOR_CELL_HEIGHT, 20);
   const ideal = backend === "sixel"
-    ? Math.ceil(((terminal.columns - 4) * cellWidth) / videoAspect / cellHeight)
-    : Math.ceil((terminal.columns - 4) / videoAspect / 2);
+    ? Math.ceil(((videoColumns - 2) * cellWidth) / videoAspect / cellHeight)
+    : Math.ceil((videoColumns - 2) / videoAspect / 2);
   const playerRows = clamp(ideal, 6, maximumPlayer);
-  return { playerRows, chatRows: Math.max(minimumChat, available - playerRows) };
+  return { playerRows, chatRows: Math.max(minimumChat, available - playerRows), ...columns };
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {

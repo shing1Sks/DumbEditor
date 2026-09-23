@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, copyFile, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeDirectEdit } from "../src/core/editor.js";
@@ -21,6 +21,7 @@ test("edits a video, records a version, and reverts without deleting history", {
 
     const store = await ProjectStore.open(source);
     const result = await executeDirectEdit(store, { action: "remove", ranges: [{ start: 3, end: 4 }, { start: 0, end: 1 }, { start: 0.5, end: 0.75 }] }, "remove ends");
+    const firstEditPath = result.version.filePath;
     assert.equal(result.version.id, "v0001");
     assert.ok(result.media.duration > 1.8 && result.media.duration < 2.2);
     assert.equal(store.snapshot.versions.length, 2);
@@ -58,6 +59,18 @@ test("edits a video, records a version, and reverts without deleting history", {
       /exceeds the 160px video width/,
     );
     assert.equal(store.snapshot.versions.length, 6);
+
+    const sixthPath = store.nextOutputPath();
+    await copyFile(cropped.version.filePath, sixthPath);
+    await store.commit({ outputPath: sixthPath, action: "Checkpoint", request: "retention check", duration: cropped.media.duration });
+    assert.equal(store.snapshot.versions.length, 6);
+    assert.equal(store.snapshot.versions.some((version) => version.id === "v0001"), false);
+    await assert.rejects(access(firstEditPath));
+
+    await store.setVersionLimit(2);
+    assert.equal(store.versionLimit, 2);
+    assert.equal(store.snapshot.versions.length, 3);
+    assert.equal(store.current.id, "v0006");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
