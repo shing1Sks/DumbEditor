@@ -21,11 +21,11 @@ export const DEFAULT_SETTINGS: DumbEditorSettings = {
   models: {
     openai: { text: "gpt-6-luna" },
     openrouter: {
-      text: "openai/gpt-luna-latest",
+      text: "openai/gpt-6-luna",
       image: "google/gemini-3.1-flash-lite-image",
       audio: "openai/gpt-audio-mini",
       music: "google/lyria-3-clip-preview",
-      video: "google/veo-3.1",
+      video: "google/veo-3.1-lite",
     },
   },
 };

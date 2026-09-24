@@ -1,28 +1,32 @@
 # DumbEditor
 
-**A zero UX video editor that lives entirely in your terminal.**
+**An agent first video editor that lives entirely in your terminal.**
 
-DumbEditor turns ordinary language into small, reversible FFmpeg edits. GPT-6 Luna understands the request and selects a validated built-in operation. Slash commands provide a direct path when you already know what you want. The source video is never overwritten.
+DumbEditor exists for edits that should not require a wall of buttons, several tutorials, or a credit hungry AI interface. Describe the result you want, preview it in the terminal, and keep every render reversible. FFmpeg performs edits locally; GPT-6 Luna plans and checks multi-step work.
 
-## Current features
+## V1 features
 
 - High resolution Sixel video preview in supported terminals, with an ANSI fallback
-- Player height matched to the video aspect ratio, with the timeline and chat directly below it
-- Stable player and chat surfaces during playback
-- Play, pause, five second seeking, preview audio, and volume controls
-- Plain language removal, trimming, speed, mute, and crop requests through GPT-6 Luna
-- Discoverable slash command menu with keyboard selection and completion
-- Wide-screen version and session sidebars around the video preview
-- Progress indicators for AI interpretation, FFmpeg rendering, output checks, and version saving
-- Version history with undo, revert, branching, export, and configurable retention
-- OpenAI and OpenRouter model defaults backed by each provider's live catalog
+- Stable player, timeline, chat, version sidebar, and session sidebar
+- Playback, five second seeking, marks, preview audio, and volume controls
+- A real GPT-6 Luna tool loop that can inspect frames and chain several edits
+- Remove, keep, speed, mute, and crop tools
+- Text overlays, burned subtitles, timed image overlays, fades, and ranged visual effects
+- Background music mixing with original audio, volume, looping, trim, and delayed start
+- Image, speech, music, and video asset generation through configured provider models
+- Searchable CC BY 4.0 background music with preview, persistent selection, source, and attribution
+- Project workspace for generated assets, subtitle files, notes, and scripts
+- Immutable versions with undo, revert, branching, export, and configurable retention
+- Interactive OpenAI and OpenRouter model catalogs with capability specific pricing units
+- Loaders for planning, provider generation, FFmpeg rendering, output checks, and version commits
 
 ## Requirements
 
 - Node.js 20 or newer
 - `ffmpeg`, `ffprobe`, and optionally `ffplay` on `PATH`
-- Windows Terminal 1.22+ or another Sixel terminal for the high resolution preview
-- An OpenAI API key
+- Windows Terminal 1.22+ or another Sixel terminal for high resolution preview
+- An OpenAI API key for Luna
+- An optional OpenRouter key for configured image, speech, music, and video generation
 
 ## Install and run
 
@@ -36,35 +40,43 @@ dumbeditor setup
 dumbeditor video.mp4
 ```
 
-During development:
+For development:
 
 ```bash
 npm run dev -- video.mp4
 ```
 
-Running `dumbeditor` without arguments prints a clean project overview. On the first launch it also explains the problem DumbEditor is built to solve and the two commands needed to begin. `dumbeditor --help` prints the complete CLI, editor command, control, time format, and example reference.
+The first no-argument launch explains why DumbEditor was built and how to start. Later no-argument launches show a short project overview. `dumbeditor --help` prints the full CLI and editor reference.
 
-`dumbeditor setup` asks for a required OpenAI key and an optional OpenRouter key using hidden terminal input. It stores keys in `~/.dumbeditor/.env`. Model choices are stored separately in `~/.dumbeditor/settings.json`. The setup-managed user config takes precedence, followed by a current-directory `.env` and the package-local development `.env`. All `.env` files are excluded from Git.
+`dumbeditor setup` asks for a required OpenAI key and an optional OpenRouter key with hidden input. It stores them in `~/.dumbeditor/.env`. Model choices live in `~/.dumbeditor/settings.json`. Setup managed config takes precedence over a current-directory `.env` and the package development `.env`. Secrets are excluded from Git.
 
-The editor model defaults to `gpt-6-luna`. Use `/model` inside the editor to view OpenAI and OpenRouter defaults, load the providers' current model catalogs, and select another model.
+## Ask Luna
 
-## Natural language editing
-
-Write requests as you normally would. You do not need to memorize timestamp syntax.
+Write normal requests. Luna receives the active version, media details, playhead, marks, and project conversation. It can inspect sampled frames, call several strict tools in sequence, recover from a failed tool call, and summarize the versions and assets it created.
 
 ```text
-remove the first two seconds and the last ten seconds
-keep only the part from 00:10 through 00:42
-make this marked section twice as fast
-mute the next five seconds
-crop the video to 1280 by 720
+remove the first two seconds and mute the last five
+inspect the video, create a small badge, and show it at the top right from 4 to 9 seconds
+write subtitles for these lines, burn them in, then fade out the final second
+use the background music I selected, loop it quietly under the whole video
+generate a five second establishing shot of a rainy city for this project
 ```
 
-The model receives the current duration, playhead, marked range, and recent project conversation. It returns one typed edit action. DumbEditor validates the values before running FFmpeg.
+The main editor agent is pinned to `gpt-6-luna`. The default economical asset models are:
+
+| Capability | Default |
+| --- | --- |
+| OpenRouter text | `openai/gpt-6-luna` |
+| Image | `google/gemini-3.1-flash-lite-image` |
+| Speech audio | `openai/gpt-audio-mini` |
+| Music | `google/lyria-3-clip-preview` |
+| Video | `google/veo-3.1-lite` |
+
+Provider catalogs and prices change. `/model` loads the current catalog and displays each capability in its billing unit before selection.
 
 ## Slash commands
 
-Type `/` to open the command menu. Use `↑` and `↓` to choose, then `Tab` or `Enter` to complete a command.
+Type `/` to open the scrollable command menu. Use Up and Down to choose, then Tab or Enter to complete a command.
 
 ```text
 /clip-remove <FROM> <TO> [FROM TO ...]
@@ -78,6 +90,7 @@ Type `/` to open the command menu. Use `↑` and `↓` to choose, then `Tab` or 
 /revert <VERSION>
 /undo
 /export <OUTPUT PATH>
+/bg-music [QUERY]
 /model
 /status
 /play
@@ -87,66 +100,87 @@ Type `/` to open the command menu. Use `↑` and `↓` to choose, then `Tab` or 
 /quit
 ```
 
-Direct time arguments accept seconds, `mm:ss`, `hh:mm:ss`, `start`, `end`, `playhead`, `in`, and `out`.
+Time arguments accept seconds, `mm:ss`, `hh:mm:ss`, `start`, `end`, `playhead`, `in`, and `out`.
 
-`/version-limits` reports the current retention limit. `/version-limits 10` keeps the ten newest rendered edits plus the original source. The default is five. Pruned renders are removed from the project directory while the source is always preserved.
+`/version-limits 10` keeps the ten newest rendered versions plus the original. The default is five. The source is never overwritten or pruned.
 
-`/model` opens a keyboard modal at the top of each list. Choose OpenAI or OpenRouter, choose an OpenRouter capability when needed, then type to search the provider's current catalog. Text models show input and output prices per one million tokens. Audio distinguishes token and character rates; image shows endpoint rates per image, megapixel, token, or request; music shows its per-song or per-clip price; video shows the live SKU range and its billing unit. Use `↑` and `↓` to move, `Enter` to select, and `Esc` to go back. OpenRouter execution will be added with the workflows that use those capabilities.
+### Music browser
+
+`/bg-music` opens a terminal popup. Type to search by title, genre, mood, artist, or description. Use Up and Down to move, Space to preview or stop, Enter to select, Delete to clear the selection, and Escape to close. The V1 catalog contains explicitly attributed Kevin MacLeod tracks under CC BY 4.0 and keeps each source page and license with the track.
+
+After selection, ask Luna to use the selected background music. Luna downloads the chosen track into the project workspace, records the attribution, and mixes it through the validated local audio tool.
+
+### Model browser
+
+`/model` opens the provider and capability picker. Type to search. Text shows input and output token prices; audio distinguishes token and character rates; image uses image, megapixel, token, or request rates; music shows song or clip rates; video shows the live SKU range and billing unit.
 
 ## Controls
 
 | Input | Action |
 | --- | --- |
-| `Space` | Play or pause |
-| `←` / `→` | Seek backward or forward five seconds |
-| `↑` / `↓` | Change volume, or move through command suggestions |
-| `[` / `]` | Set the in and out marks |
-| `Tab` | Complete the selected command |
-| `Enter` | Send a request or choose a command |
+| `Space` | Play or pause; preview or stop a track in the music popup |
+| Left / Right | Seek five seconds; go back or choose in a popup |
+| Up / Down | Change volume or move through lists |
+| `[` / `]` | Set in and out marks |
+| `Tab` | Complete a command or move through a popup |
+| `Enter` | Send, complete, or select |
 | `Esc` | Clear input or close a panel |
-| `Ctrl+C` | Quit |
+| `Ctrl+C` | Quit and terminate preview processes |
 
 ## Preview backend
 
-DumbEditor automatically uses Sixel in Windows Terminal and terminals that advertise Sixel support. Frames are scaled with Lanczos and painted only inside the reserved player surface. The timeline updates independently from the conversation.
-
-Force the portable block renderer when needed:
+DumbEditor chooses Sixel in Windows Terminal and terminals that advertise Sixel support. Frames are scaled with Lanczos and painted only inside the reserved player surface.
 
 ```powershell
 $env:DUMBEDITOR_PREVIEW = "blocks"
 dumbeditor video.mp4
 ```
 
-`DUMBEDITOR_CELL_WIDTH` and `DUMBEDITOR_CELL_HEIGHT` override the estimated terminal cell size used to fit Sixel images. The defaults target Windows Terminal with Cascadia Mono.
+`DUMBEDITOR_CELL_WIDTH` and `DUMBEDITOR_CELL_HEIGHT` override the terminal cell size used for Sixel fitting.
 
-## Architecture
+## Agent tools and workspace
 
 ```mermaid
 flowchart LR
-  Input[Plain language + editor state] --> Luna[GPT-6 Luna]
-  Luna --> Typed[Validated edit action]
-  Slash[Slash command] --> Typed
-  Typed --> FFmpeg
-  FFmpeg --> Version[Immutable version]
+  Prompt[Request + project state] --> Luna[GPT-6 Luna]
+  Luna --> Frames[Frame inspection]
+  Luna --> Assets[Asset providers]
+  Luna --> Tools[Validated edit tools]
+  Assets --> Workspace[Project workspace]
+  Workspace --> Tools
+  Tools --> FFmpeg
+  FFmpeg --> Version[Probed immutable version]
   Version --> Preview[Terminal preview]
 ```
 
-Each source gets a project directory beside it:
+Each source has a project directory beside it:
 
 ```text
 .dumbeditor/<video-name>-<hash>/
   project.json
   chat.jsonl
   versions/
+  agent/
+    context.jsonl
+    workspace/
+      assets.json
+      assets/
+      files/
 ```
 
-Reverting changes the active version pointer, so a new edit after a revert creates a branch. Retention keeps the original source and the configured number of rendered edits.
+The readable transcript stays in `chat.jsonl`. Raw response items and tool results are appended to the agent ledger. Generated assets and supporting files persist in the project workspace.
+
+The agent can write subtitle files, notes, and scripts inside that workspace. Arbitrary script execution is enabled only through an isolated container runtime. If no supported container is configured, execution fails closed while all built-in FFmpeg tools continue to work. API keys remain in the host process and are never placed in an execution sandbox.
+
+The packaged [`skills`](skills) document the verified video, asset, audio, music, and workspace workflows used by Luna.
 
 ## Development
 
 ```bash
 npm run quality
 ```
+
+The test suite renders synthetic media with FFmpeg and checks pixels, PCM audio, version commits, input validation, catalog selection, preview lifecycle, and Luna's function-call loop. It does not spend provider credits.
 
 ## License
 

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { appendFile, copyFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ChatMessage, ProjectState, VersionEntry } from "../types.js";
@@ -6,6 +6,7 @@ import { probeMedia } from "./media.js";
 
 const STATE_FILE = "project.json";
 const CHAT_FILE = "chat.jsonl";
+const AGENT_CONTEXT_FILE = "context.jsonl";
 export const DEFAULT_VERSION_LIMIT = 5;
 
 export class ProjectStore {
@@ -149,8 +150,25 @@ export class ProjectStore {
     }
   }
 
+  async searchChat(query: string, limit = 20): Promise<ChatMessage[]> {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return [];
+    const count = Math.max(1, Math.min(50, Math.floor(limit)));
+    return (await this.chatHistory())
+      .filter((message) => message.content.toLowerCase().includes(normalized))
+      .slice(-count);
+  }
+
+  async appendAgentContext(direction: "response" | "tool", items: unknown[]): Promise<void> {
+    if (items.length === 0) return;
+    const path = join(this.state.projectDir, "agent", AGENT_CONTEXT_FILE);
+    const at = new Date().toISOString();
+    const lines = items.map((item) => JSON.stringify({ at, direction, item })).join("\n");
+    await appendFile(path, `${lines}\n`, "utf8");
+  }
+
   createAgentWorkspace(): string {
-    return join(this.state.projectDir, "agent", `${Date.now()}-${randomUUID().slice(0, 8)}`);
+    return join(this.state.projectDir, "agent", "workspace");
   }
 
   private makeVersionId(value: number): string {

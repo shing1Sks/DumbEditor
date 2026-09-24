@@ -125,6 +125,7 @@ Editor commands:
   /undo              Switch to the current version's parent
   /export <path>     Export the active version
   /model             Choose a provider, capability, and model interactively
+  /bg-music [query]  Search, preview, and select open-license music
   /status            Show project details
   /play              Play the preview
   /pause             Pause the preview

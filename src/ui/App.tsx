@@ -3,11 +3,13 @@ import { basename, resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { ChildProcess } from "node:child_process";
 import type { ChatMessage, DirectEdit, MediaInfo, Selection } from "../types.js";
+import { runEditorAgent } from "../core/agent-runtime.js";
 import { commandSuggestions, parseEditCommand } from "../core/commands.js";
 import { providerKeyStatus } from "../core/config.js";
 import { executeDirectEdit } from "../core/editor.js";
-import { askOpenAI } from "../core/openai.js";
 import { playAudio, probeMedia } from "../core/media.js";
+import { listMusicTracks, searchMusicTracks } from "../core/music-catalog.js";
+import { clearMusicSelection, MusicPreviewController, readMusicSelection, selectMusicTrack } from "../core/music.js";
 import { listProviderModels } from "../core/models.js";
 import { ProjectStore } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
@@ -17,12 +19,13 @@ import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { editorLayout } from "./layout.js";
 import { filteredPickerModels, initialModelPicker, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
+import { MusicPanel } from "./MusicPanel.js";
 import { SessionSidebar, VersionsSidebar } from "./Sidebars.js";
 import { Timeline } from "./Timeline.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
-type Overlay = "help" | "history" | "model" | null;
-interface LoaderState { source: "OpenAI" | "Command" | "Editor"; stage: string }
+type Overlay = "help" | "history" | "model" | "music" | null;
+interface LoaderState { source: "Luna" | "Command" | "Editor"; stage: string }
 const SPINNER = ["◐", "◓", "◑", "◒"];
 
 export function App({ initialPath }: { initialPath?: string }) {
@@ -50,12 +53,19 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [modelPicker, setModelPicker] = useState<ModelPickerState>(initialModelPicker);
   const [modelOverlayReady, setModelOverlayReady] = useState(false);
   const modelRequest = useRef(0);
+  const musicPreview = useRef<MusicPreviewController | null>(null);
+  if (!musicPreview.current) musicPreview.current = new MusicPreviewController();
+  const [musicQuery, setMusicQuery] = useState("");
+  const [musicIndex, setMusicIndex] = useState(0);
+  const [selectedMusicId, setSelectedMusicId] = useState<string | null>(null);
+  const [previewMusicId, setPreviewMusicId] = useState<string | null>(null);
   const didOpenInitialPath = useRef(false);
 
   const busy = loader !== null;
   const previewBackend = useMemo(() => activePreviewBackend(), []);
   const layout = useMemo(() => editorLayout(terminal, media, previewBackend), [terminal, media, previewBackend]);
   const suggestions = useMemo(() => commandSuggestions(input), [input]);
+  const musicTracks = useMemo(() => musicQuery.trim() ? searchMusicTracks(musicQuery) : listMusicTracks(), [musicQuery]);
   const currentFile = project?.current.filePath;
 
   useEffect(() => {
@@ -64,7 +74,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     return () => clearInterval(timer);
   }, [busy]);
   useEffect(() => { setSuggestionIndex(0); }, [input]);
-  useEffect(() => () => terminateRunningProcesses(), []);
+  useEffect(() => () => { musicPreview.current?.dispose(); terminateRunningProcesses(); }, []);
   useEffect(() => { void readSettings().then(setSettings).catch((error) => setStatus(errorMessage(error))); }, []);
   useEffect(() => {
     if (overlay !== "model") { setModelOverlayReady(false); return; }
@@ -154,6 +164,17 @@ export function App({ initialPath }: { initialPath?: string }) {
     setOverlay("model");
   }, []);
 
+  const openMusicBrowser = useCallback(async (query: string) => {
+    setPlaying(false);
+    musicPreview.current?.stop();
+    setPreviewMusicId(null);
+    setMusicQuery(query);
+    setMusicIndex(0);
+    const saved = await readMusicSelection();
+    setSelectedMusicId(saved.trackId);
+    setOverlay("music");
+  }, []);
+
   const loadModelChoices = useCallback(async (provider: ModelProvider, slot: OpenRouterSlot) => {
     const request = ++modelRequest.current;
     setModelPicker({ step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: true, error: null });
@@ -222,6 +243,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/pause") { setCurrentTime(currentTimeRef.current); setPlaying(false); return; }
     if (command === "/open") { if (!argument) { await answer("Usage: /open <VIDEO PATH>"); return; } await openVideo(argument); return; }
     if (command === "/model") { openModelPicker(); return; }
+    if (command === "/bg-music") { await openMusicBrowser(argument); return; }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
 
     const direct = parseEditCommand(line, { duration: media.duration, currentTime: currentTimeRef.current, selection });
@@ -258,7 +280,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       return;
     }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, media, openModelPicker, openVideo, project, selection]);
+  }, [answer, applyEdit, changeVersion, exit, media, openModelPicker, openMusicBrowser, openVideo, project, selection]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -272,19 +294,61 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (request.startsWith("/")) { try { await handleCommand(request); } catch (error) { await answer(errorMessage(error)); } return; }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
 
-    setPlaying(false); setLoader({ source: "OpenAI", stage: "Understanding your request" });
+    setPlaying(false); setLoader({ source: "Luna", stage: "Understanding your request" });
     try {
-      const priorHistory = await project.chatHistory(); await project.addChat("user", request);
-      const decision = await askOpenAI({ request, duration: media.duration, currentTime: currentTimeRef.current, selection, history: priorHistory });
-      if (decision.kind === "message") {
-        setLoader({ source: "OpenAI", stage: "Writing response" }); await answer(decision.message); setStatus(decision.model);
-      } else { await applyEdit(decision.edit, request, "OpenAI"); setStatus(`${decision.model} · complete`); }
-    } catch (error) { await answer(errorMessage(error)); setStatus("OpenAI request failed"); }
+      await project.addChat("user", request);
+      const before = project.current.id;
+      const result = await runEditorAgent({
+        request, store: project, media, currentTime: currentTimeRef.current, selection,
+        onStage: (stage) => setLoader({ source: "Luna", stage }),
+      });
+      if (result.versionId !== before) {
+        setMedia(result.media); setRevision((value) => value + 1); movePlayhead(0); setSelection({ in: null, out: null });
+      }
+      setLoader({ source: "Luna", stage: "Writing response" });
+      await answer(result.message); setStatus(`${result.model} · ${result.toolCalls} tools`);
+    } catch (error) { await answer(errorMessage(error)); setStatus("Luna request failed"); }
     finally { setLoader(null); }
-  }, [addUiMessage, answer, applyEdit, busy, handleCommand, input, media, project, selection, suggestionIndex, suggestions]);
+  }, [addUiMessage, answer, busy, handleCommand, input, media, movePlayhead, project, selection, suggestionIndex, suggestions]);
 
   useInput((character, key) => {
     if (key.ctrl && character === "c") { exit(); return; }
+    if (overlay === "music") {
+      if (key.escape || key.leftArrow) { musicPreview.current?.stop(); setPreviewMusicId(null); setOverlay(null); return; }
+      if (key.upArrow || key.downArrow || key.tab) {
+        if (musicTracks.length > 0) setMusicIndex((value) => (value + (key.upArrow ? -1 : 1) + musicTracks.length) % musicTracks.length);
+        return;
+      }
+      if (character === " ") {
+        const track = musicTracks[musicIndex];
+        if (!track) return;
+        if (previewMusicId === track.id) { musicPreview.current?.stop(); setPreviewMusicId(null); }
+        else {
+          try {
+            musicPreview.current?.play(track.id, {
+              volume,
+              onEnd: () => setPreviewMusicId(null),
+              onError: (error) => { setPreviewMusicId(null); setStatus(error.message); },
+            });
+            setPreviewMusicId(track.id);
+          } catch (error) { setStatus(errorMessage(error)); }
+        }
+        return;
+      }
+      if (key.return || key.rightArrow) {
+        const track = musicTracks[musicIndex];
+        if (track) void selectMusicTrack(track.id).then(() => {
+          musicPreview.current?.stop(); setPreviewMusicId(null); setSelectedMusicId(track.id); setOverlay(null);
+          setStatus(`${track.title} selected`); void answer(`${track.title} selected. Ask Luna to add the selected background music.`);
+        }).catch((error) => setStatus(errorMessage(error)));
+        return;
+      }
+      if (key.delete) { void clearMusicSelection().then(() => { setSelectedMusicId(null); setStatus("Background music selection cleared"); }); return; }
+      if (key.ctrl && character === "u") { setMusicQuery(""); setMusicIndex(0); return; }
+      if (key.backspace) { setMusicQuery((value) => value.slice(0, -1)); setMusicIndex(0); return; }
+      if (character && !key.ctrl && !key.meta && !key.tab) { setMusicQuery((value) => value + character.replace(/[\r\n]+/g, " ")); setMusicIndex(0); }
+      return;
+    }
     if (overlay === "model") {
       if (key.escape || key.leftArrow) { backModelPicker(); return; }
       if (!modelOverlayReady) return;
@@ -358,6 +422,8 @@ export function App({ initialPath }: { initialPath?: string }) {
             ? <ModelPanel picker={modelPicker} settings={settings} keys={providerKeyStatus()}
               width={terminal.columns - 2} height={layout.playerRows} />
             : <Box width={terminal.columns - 2} height={layout.playerRows} />
+          : overlay === "music" ? <MusicPanel tracks={musicTracks} query={musicQuery} selectedIndex={musicIndex}
+              selectedId={selectedMusicId} previewId={previewMusicId} width={terminal.columns - 2} height={layout.playerRows} />
           : <>
             {layout.leftSidebarColumns > 0 && <VersionsSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""} width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
@@ -385,6 +451,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1}>
         {loader ? <Text color="yellow">{SPINNER[spinnerFrame]} {loader.source} · {loader.stage}</Text>
           : overlay === "model" ? <Text color="cyan">Model picker active · use the keyboard in the popup</Text>
+            : overlay === "music" ? <Text color="cyan">Music browser active · search, preview, and select in the popup</Text>
             : <><Text color="cyan">› </Text><Text>{input.slice(0, inputCursor)}</Text><Text inverse>{input[inputCursor] ?? " "}</Text><Text>{input.slice(inputCursor + (inputCursor < input.length ? 1 : 0))}</Text></>}
       </Box>
       <Text dimColor>{loader ? `${loader.source} is working · please wait` : `${status} · ${settings.models.openai.text} · Enter to send · Ctrl+C to quit`}</Text>
