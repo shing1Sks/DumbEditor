@@ -8,7 +8,7 @@ import { executeDirectEdit } from "./editor.js";
 import { runLunaAgent, type AgentTool, type LunaAgentResult } from "./luna-agent.js";
 import { findMusicTrack, searchMusicTracks } from "./music-catalog.js";
 import { selectedMusicTrack } from "./music.js";
-import { probeMedia } from "./media.js";
+import { extractRawFrame, probeMedia } from "./media.js";
 import { runProcess } from "./process.js";
 import { ProjectStore } from "./project.js";
 
@@ -179,16 +179,34 @@ async function inspectFrames(filePath: string, value: unknown, detail: unknown, 
   const width = detail === "high" ? 1280 : 640;
   const items: Array<Record<string, unknown>> = [];
   for (const timestamp of timestamps) {
+    const sampleSize = { width: 32, height: 18 };
+    const sample = await extractRawFrame(filePath, timestamp, sampleSize);
+    const average = averageRgb(sample);
     const path = workspace.assetPath("image", ".jpg");
     await runProcess("ffmpeg", ["-y", "-v", "error", "-ss", timestamp.toFixed(3), "-i", filePath, "-frames:v", "1", "-vf", `scale='min(${width},iw)':-2`, "-q:v", "3", path],
       { timeoutMs: 30_000, maxOutputBytes: 1_000_000 });
     const bytes = await readFile(path);
     items.push({ role: "user", content: [
-      { type: "input_text", text: `Frame at ${timestamp.toFixed(3)} seconds` },
+      { type: "input_text", text: `Frame at ${timestamp.toFixed(3)} seconds. Whole-frame average RGB: ${average.red}, ${average.green}, ${average.blue}. Use this numeric measurement as a cross-check, while relying on the image for objects, layout, and local colors.` },
       { type: "input_image", image_url: `data:image/jpeg;base64,${bytes.toString("base64")}`, detail },
     ] });
   }
   return { ok: true, message: `Extracted ${items.length} frame(s).`, data: { timestamps }, inputItems: items };
+}
+
+function averageRgb(buffer: Buffer): { red: number; green: number; blue: number } {
+  if (buffer.length < 3) return { red: 0, green: 0, blue: 0 };
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let pixels = 0;
+  for (let offset = 0; offset + 2 < buffer.length; offset += 3) {
+    red += buffer[offset] ?? 0;
+    green += buffer[offset + 1] ?? 0;
+    blue += buffer[offset + 2] ?? 0;
+    pixels += 1;
+  }
+  return { red: Math.round(red / pixels), green: Math.round(green / pixels), blue: Math.round(blue / pixels) };
 }
 
 async function musicPath(workspace: AgentWorkspace, source: string, reference: unknown): Promise<string> {
