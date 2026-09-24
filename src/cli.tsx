@@ -123,7 +123,7 @@ Editor commands:
   /version-limits [N] Show or set retained edit versions (default: 5)
   /revert <id>       Switch to a saved version
   /undo              Switch to the current version's parent
-  /export <path>     Export the active version
+  /export [path]     Choose destination, MP4/MKV, and compression
   /model             Choose a provider, capability, and model interactively
   /bg-music [query]  Search, preview, and select open-license music
   /status            Show project details

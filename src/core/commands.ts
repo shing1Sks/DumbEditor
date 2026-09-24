@@ -18,7 +18,7 @@ export const COMMANDS: CommandDefinition[] = [
   { name: "/version-limits", usage: "/version-limits [1-100]", description: "Show or set retained edit versions" },
   { name: "/revert", usage: "/revert <VERSION>", description: "Switch to a saved version" },
   { name: "/undo", usage: "/undo", description: "Go to the parent version" },
-  { name: "/export", usage: "/export <OUTPUT PATH>", description: "Export the active version" },
+  { name: "/export", usage: "/export [OUTPUT PATH]", description: "Open format and compression popup" },
   { name: "/bg-music", usage: "/bg-music [QUERY]", description: "Browse open-license background music" },
   { name: "/model", usage: "/model", description: "Open the provider and model picker" },
   { name: "/status", usage: "/status", description: "Show project details" },

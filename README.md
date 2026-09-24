@@ -89,7 +89,7 @@ Type `/` to open the scrollable command menu. Use Up and Down to choose, then Ta
 /version-limits [1-100]
 /revert <VERSION>
 /undo
-/export <OUTPUT PATH>
+/export [OUTPUT PATH]
 /bg-music [QUERY]
 /model
 /status
@@ -103,6 +103,19 @@ Type `/` to open the scrollable command menu. Use Up and Down to choose, then Ta
 Time arguments accept seconds, `mm:ss`, `hh:mm:ss`, `start`, `end`, `playhead`, `in`, and `out`.
 
 `/version-limits 10` keeps the ten newest rendered versions plus the original. The default is five. The source is never overwritten or pruned.
+
+### Export popup
+
+`/export` opens a terminal popup with an editable destination. An optional path after the command pre-fills that field. Choose MP4 or MKV, then select a compression preset:
+
+| Preset | Video | Audio | Use |
+| --- | --- | --- | --- |
+| No recompression | Stream copy | Stream copy | Fast container change with unchanged quality |
+| High quality | H.264 CRF 18 | AAC 192 kb/s | Near-source quality |
+| Balanced | H.264 CRF 23 | AAC 160 kb/s | Default quality and size balance |
+| Small file | H.264 CRF 28 | AAC 128 kb/s | Easier sharing |
+
+Use Tab to move between destination, format, and compression. Use the arrow keys to edit or select, Enter to export, and Escape to close. DumbEditor renders to a temporary file, validates it with FFprobe, and only then writes the requested destination.
 
 ### Music browser
 

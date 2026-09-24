@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { basename, resolve } from "node:path";
+import { basename, extname, resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { ChildProcess } from "node:child_process";
 import type { ChatMessage, DirectEdit, MediaInfo, Selection } from "../types.js";
@@ -7,6 +7,7 @@ import { runEditorAgent } from "../core/agent-runtime.js";
 import { commandSuggestions, parseEditCommand } from "../core/commands.js";
 import { providerKeyStatus } from "../core/config.js";
 import { executeDirectEdit } from "../core/editor.js";
+import { EXPORT_FORMATS, EXPORT_PRESETS, exportDestination, exportVideo, type ExportFormat } from "../core/export.js";
 import { playAudio, probeMedia } from "../core/media.js";
 import { listMusicTracks, searchMusicTracks } from "../core/music-catalog.js";
 import { clearMusicSelection, MusicPreviewController, readMusicSelection, selectMusicTrack } from "../core/music.js";
@@ -18,13 +19,14 @@ import { formatTime } from "../core/time.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { editorLayout } from "./layout.js";
+import { ExportPanel, type ExportFocus, type ExportPanelState } from "./ExportPanel.js";
 import { filteredPickerModels, initialModelPicker, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
 import { MusicPanel } from "./MusicPanel.js";
 import { SessionSidebar, VersionsSidebar } from "./Sidebars.js";
 import { Timeline } from "./Timeline.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
-type Overlay = "help" | "history" | "model" | "music" | null;
+type Overlay = "help" | "history" | "model" | "music" | "export" | null;
 interface LoaderState { source: "Luna" | "Command" | "Editor"; stage: string }
 const SPINNER = ["◐", "◓", "◑", "◒"];
 
@@ -59,6 +61,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [musicIndex, setMusicIndex] = useState(0);
   const [selectedMusicId, setSelectedMusicId] = useState<string | null>(null);
   const [previewMusicId, setPreviewMusicId] = useState<string | null>(null);
+  const [exportPanel, setExportPanel] = useState<ExportPanelState>(() => ({ destination: "", cursor: 0, format: "mp4", preset: "balanced", focus: "path" }));
   const didOpenInitialPath = useRef(false);
 
   const busy = loader !== null;
@@ -175,6 +178,37 @@ export function App({ initialPath }: { initialPath?: string }) {
     setOverlay("music");
   }, []);
 
+  const openExportPanel = useCallback((requested: string) => {
+    if (!project) return;
+    const format: ExportFormat = extname(requested).toLowerCase() === ".mkv" ? "mkv" : "mp4";
+    const destination = exportDestination(project.snapshot.sourcePath, requested || undefined, format);
+    setPlaying(false);
+    setExportPanel({ destination, cursor: destination.length, format, preset: "balanced", focus: "path" });
+    setOverlay("export");
+  }, [project]);
+
+  const performExport = useCallback(async () => {
+    if (!project) return;
+    setLoader({ source: "Editor", stage: "Preparing export" });
+    try {
+      const result = await exportVideo({
+        input: project.current.filePath,
+        destination: exportPanel.destination,
+        format: exportPanel.format,
+        preset: exportPanel.preset,
+        onStage: (stage) => setLoader({ source: "Editor", stage }),
+      });
+      setOverlay(null);
+      await answer(`Exported ${result.path} · ${result.format.toUpperCase()} · ${formatBytes(result.bytes)}`);
+      setStatus("Export complete");
+    } catch (error) {
+      await answer(errorMessage(error));
+      setStatus("Export failed");
+    } finally {
+      setLoader(null);
+    }
+  }, [answer, exportPanel, project]);
+
   const loadModelChoices = useCallback(async (provider: ModelProvider, slot: OpenRouterSlot) => {
     const request = ++modelRequest.current;
     setModelPicker({ step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: true, error: null });
@@ -271,16 +305,9 @@ export function App({ initialPath }: { initialPath?: string }) {
       await changeVersion(parent); return;
     }
     if (command === "/revert") { if (!argument) { await answer("Usage: /revert <VERSION>"); return; } await changeVersion(argument); return; }
-    if (command === "/export") {
-      if (!argument) { await answer("Usage: /export <OUTPUT PATH>"); return; }
-      setLoader({ source: "Editor", stage: "Exporting current version" });
-      try { const output = await project.exportCurrent(argument); await answer(`Exported ${output}`); setStatus("Export complete"); }
-      catch (error) { await answer(errorMessage(error)); setStatus("Export failed"); }
-      finally { setLoader(null); }
-      return;
-    }
+    if (command === "/export") { openExportPanel(argument); return; }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, media, openModelPicker, openMusicBrowser, openVideo, project, selection]);
+  }, [answer, applyEdit, changeVersion, exit, media, openExportPanel, openModelPicker, openMusicBrowser, openVideo, project, selection]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -313,6 +340,58 @@ export function App({ initialPath }: { initialPath?: string }) {
 
   useInput((character, key) => {
     if (key.ctrl && character === "c") { exit(); return; }
+    if (overlay === "export") {
+      if (key.escape) { if (!busy) setOverlay(null); return; }
+      if (busy) return;
+      if (key.return) { void performExport(); return; }
+      if (key.tab) {
+        setExportPanel((current) => ({ ...current, focus: cycleExportFocus(current.focus, key.shift ? -1 : 1) }));
+        return;
+      }
+      if (exportPanel.focus === "format") {
+        if (key.leftArrow || key.upArrow || key.rightArrow || key.downArrow) {
+          const direction = key.leftArrow || key.upArrow ? -1 : 1;
+          setExportPanel((current) => {
+            const format = cycleChoice(EXPORT_FORMATS, current.format, direction);
+            const destination = exportDestination(project?.snapshot.sourcePath ?? current.destination, current.destination, format);
+            return { ...current, format, destination, cursor: Math.min(current.cursor, destination.length) };
+          });
+        }
+        return;
+      }
+      if (exportPanel.focus === "compression") {
+        if (key.leftArrow || key.upArrow || key.rightArrow || key.downArrow) {
+          const direction = key.leftArrow || key.upArrow ? -1 : 1;
+          setExportPanel((current) => ({ ...current, preset: cycleChoice(EXPORT_PRESETS, current.preset, direction) }));
+        }
+        return;
+      }
+      if (key.ctrl && character === "a") { setExportPanel((current) => ({ ...current, cursor: 0 })); return; }
+      if (key.ctrl && character === "e") { setExportPanel((current) => ({ ...current, cursor: current.destination.length })); return; }
+      if (key.ctrl && character === "u") { setExportPanel((current) => ({ ...current, destination: "", cursor: 0 })); return; }
+      if (key.leftArrow) { setExportPanel((current) => ({ ...current, cursor: Math.max(0, current.cursor - 1) })); return; }
+      if (key.rightArrow) { setExportPanel((current) => ({ ...current, cursor: Math.min(current.destination.length, current.cursor + 1) })); return; }
+      if (key.backspace) {
+        setExportPanel((current) => current.cursor === 0 ? current : {
+          ...current,
+          destination: current.destination.slice(0, current.cursor - 1) + current.destination.slice(current.cursor),
+          cursor: current.cursor - 1,
+        });
+        return;
+      }
+      if (key.delete) {
+        setExportPanel((current) => ({ ...current, destination: current.destination.slice(0, current.cursor) + current.destination.slice(current.cursor + 1) }));
+        return;
+      }
+      if (character && !key.ctrl && !key.meta && !key.tab) {
+        const text = character.replace(/[\r\n]+/g, " ");
+        setExportPanel((current) => ({ ...current,
+          destination: current.destination.slice(0, current.cursor) + text + current.destination.slice(current.cursor),
+          cursor: current.cursor + text.length,
+        }));
+      }
+      return;
+    }
     if (overlay === "music") {
       if (key.escape || key.leftArrow) { musicPreview.current?.stop(); setPreviewMusicId(null); setOverlay(null); return; }
       if (key.upArrow || key.downArrow || key.tab) {
@@ -424,6 +503,7 @@ export function App({ initialPath }: { initialPath?: string }) {
             : <Box width={terminal.columns - 2} height={layout.playerRows} />
           : overlay === "music" ? <MusicPanel tracks={musicTracks} query={musicQuery} selectedIndex={musicIndex}
               selectedId={selectedMusicId} previewId={previewMusicId} width={terminal.columns - 2} height={layout.playerRows} />
+          : overlay === "export" ? <ExportPanel state={exportPanel} width={terminal.columns - 2} height={layout.playerRows} />
           : <>
             {layout.leftSidebarColumns > 0 && <VersionsSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""} width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
@@ -452,6 +532,7 @@ export function App({ initialPath }: { initialPath?: string }) {
         {loader ? <Text color="yellow">{SPINNER[spinnerFrame]} {loader.source} · {loader.stage}</Text>
           : overlay === "model" ? <Text color="cyan">Model picker active · use the keyboard in the popup</Text>
             : overlay === "music" ? <Text color="cyan">Music browser active · search, preview, and select in the popup</Text>
+              : overlay === "export" ? <Text color="cyan">Export popup active · choose format and compression</Text>
             : <><Text color="cyan">› </Text><Text>{input.slice(0, inputCursor)}</Text><Text inverse>{input[inputCursor] ?? " "}</Text><Text>{input.slice(inputCursor + (inputCursor < input.length ? 1 : 0))}</Text></>}
       </Box>
       <Text dimColor>{loader ? `${loader.source} is working · please wait` : `${status} · ${settings.models.openai.text} · Enter to send · Ctrl+C to quit`}</Text>
@@ -463,4 +544,18 @@ function errorMessage(error: unknown): string { return error instanceof Error ? 
 function unquoteArgument(value: string): string {
   const first = value[0];
   return value.length >= 2 && (first === "'" || first === "\"") && value.at(-1) === first ? value.slice(1, -1) : value;
+}
+
+function cycleExportFocus(current: ExportFocus, direction: number): ExportFocus {
+  return cycleChoice(["path", "format", "compression"] as const, current, direction);
+}
+
+function cycleChoice<T extends string>(choices: readonly T[], current: T, direction: number): T {
+  const index = Math.max(0, choices.indexOf(current));
+  return choices[(index + direction + choices.length) % choices.length] ?? current;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
