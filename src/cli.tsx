@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnvironment, runSetup } from "./core/config.js";
+import { ProjectStore } from "./core/project.js";
 import { markWelcomeShown } from "./core/settings.js";
 import { App } from "./ui/App.js";
 
@@ -31,19 +32,48 @@ if (args.includes("--version") || args.includes("-v")) {
   process.exit(0);
 }
 
-const unknownOption = args.find((argument) => argument.startsWith("-"));
+if (args[0] === "clean") {
+  const source = args[1];
+  if (!source || args.length !== 2) {
+    console.error("Usage: dumbeditor clean <video>");
+    process.exit(1);
+  }
+  const removed = await ProjectStore.clean(source).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+    return null;
+  });
+  if (removed) console.log(`Cleaned DumbEditor project state for ${resolve(source)}\nSource video preserved.`);
+  process.exit(process.exitCode ?? 0);
+}
+
+let launchArgs = args;
+if (args[0] === "--fresh") {
+  const source = args[1];
+  if (!source || args.length !== 2) {
+    console.error("Usage: dumbeditor --fresh <video>");
+    process.exit(1);
+  }
+  await ProjectStore.clean(source).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+  launchArgs = [source];
+}
+
+const unknownOption = launchArgs.find((argument) => argument.startsWith("-"));
 if (unknownOption) {
   console.error(`Unknown option: ${unknownOption}\nRun dumbeditor --help for usage.`);
   process.exit(1);
 }
 
-if (args.length === 0) {
+if (launchArgs.length === 0) {
   const firstLaunch = await markWelcomeShown().catch(() => false);
   console.log(firstLaunch ? firstLaunchMessage(version) : overviewMessage(version));
   process.exit(0);
 }
 
-const initialPath = args[0]!;
+const initialPath = launchArgs[0]!;
 process.title = "DumbEditor";
 const useAlternateScreen = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 let screenRestored = false;
@@ -99,6 +129,8 @@ Usage:
   dumbeditor <video>    Open a video in the editor
   dumbeditor            Show the project overview and next steps
   dumbeditor setup      Configure provider API keys
+  dumbeditor clean <video> Remove saved project state; preserve the source
+  dumbeditor --fresh <video> Clean the project and open the source immediately
   dumbeditor --help     Show this complete reference
   dumbeditor --version  Print the installed version
 

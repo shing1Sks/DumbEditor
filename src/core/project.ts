@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, copyFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ChatMessage, ProjectState, VersionEntry } from "../types.js";
 import { probeMedia } from "./media.js";
@@ -15,9 +15,7 @@ export class ProjectStore {
   static async open(sourcePath: string): Promise<ProjectStore> {
     const absoluteSource = resolve(sourcePath);
     const media = await probeMedia(absoluteSource);
-    const slug = basename(absoluteSource, extname(absoluteSource)).replace(/[^a-z0-9_-]+/gi, "-").slice(0, 48) || "video";
-    const hash = createHash("sha256").update(absoluteSource.toLowerCase()).digest("hex").slice(0, 8);
-    const projectDir = join(dirname(absoluteSource), ".dumbeditor", `${slug}-${hash}`);
+    const { projectDir } = projectLocation(absoluteSource);
     const statePath = join(projectDir, STATE_FILE);
     await mkdir(join(projectDir, "versions"), { recursive: true });
     await mkdir(join(projectDir, "agent"), { recursive: true });
@@ -54,6 +52,17 @@ export class ProjectStore {
     const store = new ProjectStore(state);
     await store.save();
     return store;
+  }
+
+  /** Remove only DumbEditor's derived state for one source. The source media is never touched. */
+  static async clean(sourcePath: string): Promise<string> {
+    const absoluteSource = resolve(sourcePath);
+    await probeMedia(absoluteSource);
+    const { projectRoot, projectDir } = projectLocation(absoluteSource);
+    const child = relative(projectRoot, projectDir);
+    if (!child || child.startsWith("..") || isAbsolute(child)) throw new Error("Refusing to clean a project outside the source's .dumbeditor directory.");
+    await rm(projectDir, { recursive: true, force: true });
+    return projectDir;
   }
 
   get snapshot(): Readonly<ProjectState> {
@@ -212,4 +221,11 @@ export class ProjectStore {
 
 function normalizeVersionLimit(value: unknown): number {
   return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 100 ? Number(value) : DEFAULT_VERSION_LIMIT;
+}
+
+function projectLocation(absoluteSource: string): { projectRoot: string; projectDir: string } {
+  const slug = basename(absoluteSource, extname(absoluteSource)).replace(/[^a-z0-9_-]+/gi, "-").slice(0, 48) || "video";
+  const hash = createHash("sha256").update(absoluteSource.toLowerCase()).digest("hex").slice(0, 8);
+  const projectRoot = resolve(dirname(absoluteSource), ".dumbeditor");
+  return { projectRoot, projectDir: resolve(projectRoot, `${slug}-${hash}`) };
 }

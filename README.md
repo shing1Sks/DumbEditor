@@ -38,6 +38,7 @@ npm link
 dumbeditor
 dumbeditor setup
 dumbeditor video.mp4
+dumbeditor --fresh video.mp4
 ```
 
 For development:
@@ -47,6 +48,8 @@ npm run dev -- video.mp4
 ```
 
 The first no-argument launch explains why DumbEditor was built and how to start. Later no-argument launches show a short project overview. `dumbeditor --help` prints the full CLI and editor reference.
+
+DumbEditor restores the saved project associated with a source path. Use `dumbeditor --fresh <video>` to delete that source's generated versions, chat, and agent workspace and immediately reopen the untouched source. `dumbeditor clean <video>` performs the same cleanup and exits. Neither command deletes or modifies the source video.
 
 `dumbeditor setup` asks for a required OpenAI key and an optional OpenRouter key with hidden input. It stores them in `~/.dumbeditor/.env`. Model choices live in `~/.dumbeditor/settings.json`. Setup managed config takes precedence over a current-directory `.env` and the package development `.env`. Secrets are excluded from Git.
 

@@ -71,6 +71,16 @@ test("edits a video, records a version, and reverts without deleting history", {
     assert.equal(store.versionLimit, 2);
     assert.equal(store.snapshot.versions.length, 3);
     assert.equal(store.current.id, "v0006");
+
+    const projectDirectory = store.snapshot.projectDir;
+    await store.addChat("user", "temporary project conversation");
+    assert.equal(await ProjectStore.clean(source), projectDirectory);
+    await assert.rejects(access(projectDirectory));
+    await access(source);
+    const fresh = await ProjectStore.open(source);
+    assert.equal(fresh.current.id, "v0000");
+    assert.equal(fresh.snapshot.versions.length, 1);
+    assert.deepEqual(await fresh.chatHistory(), []);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
