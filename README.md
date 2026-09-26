@@ -101,6 +101,7 @@ Type `/` to open the scrollable command menu. Use Up and Down to choose, then Ta
 /undo
 /export [OUTPUT PATH]
 /bg-music [QUERY]
+/assets
 /model
 /status
 /play
@@ -153,7 +154,7 @@ After selection, ask Luna to use the selected background music. Luna downloads t
 
 ### Assets and cost tracking
 
-The right sidebar lists generated images, video, speech, music, subtitles, and agent workspace files. Each generated asset records its provider model and cost when the provider returns billing data; estimates are marked with `~`. Catalog and local assets are shown as free. Press `Shift+A` to browse the full list, use Up and Down to select an asset, and press Space to play audio, music, or video. Image and video assets have an inline preview. Start typing to close the browser, restore the main video player, and continue the text in chat.
+The right sidebar lists generated images, video, speech, music, subtitles, and agent workspace files. Each generated asset records its provider model and cost when the provider returns billing data; estimates are marked with `~`. Catalog and local assets are shown as free. Press `Shift+A` or run `/assets` to browse the full list, use Up and Down to select an asset, and press Space to play audio, music, or video. Image and video assets have an inline preview. Start typing to close the browser, restore the main video player, and continue the text in chat.
 
 The chat footer shows the running Luna cost, asset cost, and project total. These values are stored in the source video's `.dumbeditor` project and survive restarts. Luna cost includes every Responses API round in a tool loop, including cached input and reasoning output reported by the API.
 

@@ -31,7 +31,7 @@ import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
 type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | null;
 interface LoaderState { source: "Luna" | "Command" | "Editor" | "Sandbox"; stage: string }
-const SPINNER = ["◐", "◓", "◑", "◒"];
+const LOADER_MARK = "◐";
 
 export function App({ initialPath }: { initialPath?: string }) {
   const { exit } = useApp();
@@ -50,7 +50,6 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loader, setLoader] = useState<LoaderState | null>(null);
-  const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [status, setStatus] = useState("Ready");
   const [assets, setAssets] = useState<AgentAsset[]>([]);
   const [usage, setUsage] = useState<UsageSummary>(EMPTY_USAGE_SUMMARY);
@@ -79,11 +78,6 @@ export function App({ initialPath }: { initialPath?: string }) {
   const musicTracks = useMemo(() => musicQuery.trim() ? searchMusicTracks(musicQuery) : listMusicTracks(), [musicQuery]);
   const currentFile = project?.current.filePath;
 
-  useEffect(() => {
-    if (!busy) { setSpinnerFrame(0); return; }
-    const timer = setInterval(() => setSpinnerFrame((value) => (value + 1) % SPINNER.length), 120);
-    return () => clearInterval(timer);
-  }, [busy]);
   useEffect(() => { setSuggestionIndex(0); }, [input]);
   useEffect(() => () => { musicPreview.current?.dispose(); terminateProcess(assetPreview.current); terminateRunningProcesses(); }, []);
   useEffect(() => { void readSettings().then(setSettings).catch((error) => setStatus(errorMessage(error))); }, []);
@@ -121,6 +115,16 @@ export function App({ initialPath }: { initialPath?: string }) {
     assetPreview.current = null;
     setAssetPlaying(false);
   }, []);
+  const closeAssetBrowser = useCallback(() => {
+    stopAssetPlayback();
+    setOverlay(null);
+  }, [stopAssetPlayback]);
+  const openAssetBrowser = useCallback(() => {
+    setPlaying(false);
+    stopAssetPlayback();
+    setAssetIndex(Math.max(0, assets.length - 1));
+    setOverlay("assets");
+  }, [assets.length, stopAssetPlayback]);
 
   const refreshProjectData = useCallback(async (store: ProjectStore) => {
     const workspace = new AgentWorkspace(store.createAgentWorkspace());
@@ -301,6 +305,11 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/model") { openModelPicker(); return; }
     if (command === "/bg-music") { await openMusicBrowser(argument); return; }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
+    if (command === "/assets") {
+      if (argument) { await answer("Usage: /assets"); return; }
+      openAssetBrowser();
+      return;
+    }
 
     const direct = parseEditCommand(line, { duration: media.duration, currentTime: currentTimeRef.current, selection });
     if (direct) {
@@ -329,7 +338,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/revert") { if (!argument) { await answer("Usage: /revert <VERSION>"); return; } await changeVersion(argument); return; }
     if (command === "/export") { openExportPanel(argument); return; }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, media, openExportPanel, openModelPicker, openMusicBrowser, openVideo, project, selection]);
+  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openVideo, project, selection]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -372,13 +381,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   useInput((character, key) => {
     if (key.ctrl && character === "c") { exit(); return; }
     if (overlay === "assets") {
-      const closeAssets = () => {
-        terminateProcess(assetPreview.current);
-        assetPreview.current = null;
-        setAssetPlaying(false);
-        setOverlay(null);
-      };
-      if (key.escape || (key.shift && character.toLowerCase() === "a")) { closeAssets(); return; }
+      if (key.escape || (key.shift && character.toLowerCase() === "a")) { closeAssetBrowser(); return; }
       if (key.upArrow || key.downArrow) {
         terminateProcess(assetPreview.current);
         assetPreview.current = null;
@@ -406,7 +409,7 @@ export function App({ initialPath }: { initialPath?: string }) {
         return;
       }
       if (character && !key.ctrl && !key.meta && !key.tab) {
-        closeAssets();
+        closeAssetBrowser();
         const text = character.replace(/[\r\n]+/g, " ");
         setInput(text);
         setInputCursor(text.length);
@@ -536,9 +539,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (key.escape) { if (overlay) setOverlay(null); else { setInput(""); setInputCursor(0); } return; }
     if (busy) return;
     if (key.shift && character.toLowerCase() === "a") {
-      setPlaying(false);
-      setAssetIndex(Math.max(0, assets.length - 1));
-      setOverlay("assets");
+      openAssetBrowser();
       return;
     }
     if (key.tab && suggestions.length > 0) {
@@ -615,7 +616,7 @@ export function App({ initialPath }: { initialPath?: string }) {
         ))}
       </Box>
       <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1}>
-        {loader ? <Text color={loader.source === "Sandbox" ? "cyan" : "yellow"}>{SPINNER[spinnerFrame]} {loader.source === "Sandbox" ? "⬡ SANDBOX" : loader.source} · {loader.stage}</Text>
+        {loader ? <Text color={loader.source === "Sandbox" ? "cyan" : "yellow"}>{LOADER_MARK} {loader.source === "Sandbox" ? "⬡ SANDBOX" : loader.source} · {loader.stage}</Text>
           : overlay === "model" ? <Text color="cyan">Model picker active · use the keyboard in the popup</Text>
             : overlay === "music" ? <Text color="cyan">Music browser active · search, preview, and select in the popup</Text>
               : overlay === "export" ? <Text color="cyan">Export popup active · choose format and compression</Text>

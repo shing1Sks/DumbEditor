@@ -10,6 +10,7 @@ test("discovers slash commands by prefix", () => {
   assert.ok(commandSuggestions("/").some((item) => item.name === "/model"));
   assert.ok(commandSuggestions("/").some((item) => item.name === "/version-limits"));
   assert.ok(commandSuggestions("/").some((item) => item.name === "/bg-music"));
+  assert.deepEqual(commandSuggestions("/ass").map((item) => item.name), ["/assets"]);
   assert.equal(commandSuggestions("normal request").length, 0);
 });
 

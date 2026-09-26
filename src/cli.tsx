@@ -143,6 +143,7 @@ Controls:
   Enter          Send a request or complete a slash command
   Esc            Close a panel or clear the input
   Ctrl+C         Quit
+  Shift+A        Open or close the project asset browser
 
 Editor commands:
   /clip-remove <FROM> <TO> [FROM TO ...]
@@ -158,6 +159,7 @@ Editor commands:
   /export [path]     Choose destination, MP4/MKV, and compression
   /model             Choose a provider, capability, and model interactively
   /bg-music [query]  Search, preview, and select open-license music
+  /assets            Browse generated and project assets
   /status            Show project details
   /play              Play the preview
   /pause             Pause the preview
