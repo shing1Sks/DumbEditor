@@ -214,7 +214,10 @@ async function runTool(tool: AgentTool, encodedArguments: string): Promise<Agent
 function conversationItems(history: ChatMessage[], request: string, state: string): InputItem[] {
   const items: InputItem[] = [{ role: "developer", content: [{ type: "input_text", text: state }] }];
   for (const message of history) {
-    items.push({ role: message.role, content: [{ type: "input_text", text: message.content }] });
+    items.push({
+      role: message.role,
+      content: [{ type: message.role === "assistant" ? "output_text" : "input_text", text: message.content }],
+    });
   }
   items.push({ role: "user", content: [{ type: "input_text", text: request }] });
   return items;

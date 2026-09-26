@@ -81,7 +81,10 @@ test("Luna executes a tool call and returns the reviewed final response", async 
       currentVersionId: "v0000",
       currentTime: 0,
       selection: { in: null, out: null },
-      history: [],
+      history: [
+        { role: "user", content: "What is currently selected?", at: "2026-09-26T00:00:00.000Z" },
+        { role: "assistant", content: "The current video is ready for editing.", at: "2026-09-26T00:00:01.000Z" },
+      ],
       tools: [tool, auditTool],
       onUsage: async (usage) => { recordedUsage.push(usage); },
     });
@@ -93,6 +96,11 @@ test("Luna executes a tool call and returns the reviewed final response", async 
     assert.equal(result.costUsd, recordedUsage.reduce((sum, usage) => sum + usage.costUsd, 0));
     assert.equal(requests.length, 3);
     assert.equal(requests[0]?.model, "gpt-6-sol");
+    const firstInput = requests[0]?.input as Array<Record<string, unknown>>;
+    const userHistory = firstInput.find((item) => item.role === "user") as { content?: Array<Record<string, unknown>> };
+    const assistantHistory = firstInput.find((item) => item.role === "assistant") as { content?: Array<Record<string, unknown>> };
+    assert.equal(userHistory.content?.[0]?.type, "input_text");
+    assert.equal(assistantHistory.content?.[0]?.type, "output_text");
     const finalInput = requests[2]?.input as Array<Record<string, unknown>>;
     assert.equal(finalInput.some((item) => item.type === "function_call_output" && item.call_id === "call_1"), true);
     assert.equal(finalInput.some((item) => item.type === "function_call_output" && item.call_id === "call_2"), true);
