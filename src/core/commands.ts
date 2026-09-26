@@ -14,6 +14,7 @@ export const COMMANDS: CommandDefinition[] = [
   { name: "/mute", usage: "/mute <FROM> <TO>", description: "Mute one range" },
   { name: "/crop", usage: "/crop <WIDTH>x<HEIGHT> [X,Y]", description: "Crop the frame" },
   { name: "/open", usage: "/open <VIDEO PATH>", description: "Open a video" },
+  { name: "/projects", usage: "/projects", description: "Browse saved editing projects" },
   { name: "/version", usage: "/version [all]", description: "Show version history" },
   { name: "/version-limits", usage: "/version-limits [1-100]", description: "Show or set retained edit versions" },
   { name: "/revert", usage: "/revert <VERSION>", description: "Switch to a saved version" },

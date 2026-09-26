@@ -8,9 +8,9 @@ export function Help({ model = "agent" }: { model?: string }) {
       <Text>Ctrl+P play/pause  ←/→ seek 5s  +/- volume  [ set in  ] set out</Text>
       <Text>/clip-remove FROM TO [FROM TO...]  /clip-keep FROM TO</Text>
       <Text>/speed FROM TO FACTOR  /mute FROM TO  /crop WIDTHxHEIGHT [X,Y]</Text>
-      <Text>/open path  /version [all]  /revert id  /undo  /export [path] popup</Text>
-      <Text>/version-limits [N]  /model model picker  /bg-music music browser</Text>
-      <Text>/assets asset browser  (also Shift+A)</Text>
+      <Text>/open path  /projects  /version [all]  /revert id  /undo</Text>
+      <Text>/export [path] popup  /version-limits [N]  /model model picker</Text>
+      <Text>/bg-music music browser  /assets asset browser  (also Shift+A)</Text>
       <Text>/permissions [ask|auto]  /harness-model [MODEL]</Text>
       <Text dimColor>Type / for commands, use ↑/↓ to choose, and Tab to complete.</Text>
       <Text dimColor>↑/↓ scroll chat, PgUp/PgDn move a page, Ctrl+G expands chat.</Text>

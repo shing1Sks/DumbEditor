@@ -38,6 +38,9 @@ export interface ProjectState {
   currentVersionId: string;
   nextVersion: number;
   createdAt: string;
+  /** Human-readable title derived from the first natural-language request. */
+  name?: string;
+  updatedAt?: string;
   /** Number of rendered edit versions retained in addition to the source. */
   versionLimit?: number;
   versions: VersionEntry[];

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { basename, extname, resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import type { ChildProcess } from "node:child_process";
 import type { ChatMessage, DirectEdit, MediaInfo, Selection } from "../types.js";
@@ -15,7 +15,7 @@ import { playAudio, probeMedia } from "../core/media.js";
 import { listMusicTracks, searchMusicTracks } from "../core/music-catalog.js";
 import { clearMusicSelection, MusicPreviewController, readMusicSelection, selectMusicTrack } from "../core/music.js";
 import { listProviderModels } from "../core/models.js";
-import { ProjectStore } from "../core/project.js";
+import { ProjectStore, type ProjectSummary } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
 import { DEFAULT_SETTINGS, OPENAI_SLOTS, OPENROUTER_SLOTS, readSettings, setAgentPermissionMode, setClaudeHarnessModel, setDefaultModel, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
 import { formatTime } from "../core/time.js";
@@ -31,13 +31,14 @@ import { editorLayout } from "./layout.js";
 import { ExportPanel, type ExportFocus, type ExportPanelState } from "./ExportPanel.js";
 import { filteredPickerModels, initialModelPicker, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
 import { MusicPanel } from "./MusicPanel.js";
+import { ProjectsPanel } from "./ProjectsPanel.js";
 import { AssetsSidebar, ProjectSidebar } from "./Sidebars.js";
 import { Timeline } from "./Timeline.js";
 import { chatViewport, inputViewport, moveInputCursorVertically } from "./text-layout.js";
 import { clearRetainedTerminalLayer } from "./terminal-layers.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
-type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | "approval" | "choice" | null;
+type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | "projects" | "approval" | "choice" | null;
 interface LoaderState { source: string; stage: string }
 const LOADER_MARK = "◐";
 
@@ -66,6 +67,8 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [usage, setUsage] = useState<UsageSummary>(EMPTY_USAGE_SUMMARY);
   const [assetIndex, setAssetIndex] = useState(0);
   const [assetPlaying, setAssetPlaying] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectIndex, setProjectIndex] = useState(0);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [approvalAllow, setApprovalAllow] = useState(false);
   const approvalResolver = useRef<((allowed: boolean) => void) | null>(null);
@@ -231,22 +234,42 @@ export function App({ initialPath }: { initialPath?: string }) {
     setAssetIndex((value) => Math.max(0, Math.min(value, nextAssets.length - 1)));
   }, []);
 
-  const openVideo = useCallback(async (path: string) => {
+  const openVideo = useCallback(async (path: string, projectDirectory?: string) => {
     setLoader({ source: "Editor", stage: "Opening video" });
     setPlaying(false);
     try {
-      const store = await ProjectStore.open(resolve(path));
+      const store = projectDirectory
+        ? await ProjectStore.openProject(projectDirectory)
+        : await ProjectStore.open(resolve(path));
       setLoader({ source: "Editor", stage: "Reading media details" });
       const nextMedia = await probeMedia(store.current.filePath);
       const history = await store.chatHistory();
-      await refreshProjectData(store);
+      await Promise.all([refreshProjectData(store), store.register()]);
       setProject(store); setRevision((value) => value + 1); setMedia(nextMedia); setMessages(history);
       setSelection({ in: null, out: null }); currentTimeRef.current = 0; setCurrentTime(0);
-      setStatus(`Opened ${basename(path)}`);
-      addUiMessage("assistant", `Opened ${basename(path)} · ${nextMedia.width}x${nextMedia.height} · ${formatTime(nextMedia.duration)}`, "editor");
+      setStatus(`Opened ${store.name}`);
+      addUiMessage("assistant", `Opened ${store.name} · ${nextMedia.width}x${nextMedia.height} · ${formatTime(nextMedia.duration)}`, "editor");
     } catch (error) { addUiMessage("assistant", errorMessage(error)); setStatus("Open failed"); }
     finally { setLoader(null); }
   }, [addUiMessage, refreshProjectData]);
+
+  const openProjectsBrowser = useCallback(async () => {
+    setPlaying(false);
+    setLoader({ source: "Editor", stage: "Loading saved projects" });
+    try {
+      const next = await ProjectStore.listProjects(project?.snapshot.sourcePath);
+      setProjects(next);
+      const active = next.findIndex((item) => item.projectDir.toLowerCase() === project?.snapshot.projectDir.toLowerCase());
+      setProjectIndex(active >= 0 ? active : 0);
+      setOverlay("projects");
+      setStatus(`${next.length} saved project${next.length === 1 ? "" : "s"}`);
+    } catch (error) {
+      await answer(errorMessage(error));
+      setStatus("Could not load projects");
+    } finally {
+      setLoader(null);
+    }
+  }, [answer, project, setOverlay]);
 
   useEffect(() => {
     if (didOpenInitialPath.current) return;
@@ -400,6 +423,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/play") { if (media) setPlaying(true); return; }
     if (command === "/pause") { setCurrentTime(currentTimeRef.current); setPlaying(false); return; }
     if (command === "/open") { if (!argument) { await answer("Usage: /open <VIDEO PATH>"); return; } await openVideo(argument); return; }
+    if (command === "/projects") { await openProjectsBrowser(); return; }
     if (command === "/model") { openModelPicker(); return; }
     if (command === "/bg-music") { await openMusicBrowser(argument); return; }
     if (command === "/permissions") {
@@ -442,7 +466,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       await project.setVersionLimit(limit); setRevision((value) => value + 1);
       await answer(`Version limit set to ${limit}. Older rendered versions were pruned.`); return;
     }
-    if (command === "/status") { await answer(`${project.current.id} · ${media.width}x${media.height} · ${formatTime(media.duration)} · ${project.snapshot.versions.length} versions · limit ${project.versionLimit}`); return; }
+    if (command === "/status") { await answer(`${project.name} · ${project.current.id} · ${media.width}x${media.height} · ${formatTime(media.duration)} · ${project.snapshot.versions.length} versions · limit ${project.versionLimit}`); return; }
     if (command === "/undo") {
       const parent = project.current.parentId;
       if (!parent) { await answer("Already at the original version."); return; }
@@ -451,7 +475,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/revert") { if (!argument) { await answer("Usage: /revert <VERSION>"); return; } await changeVersion(argument); return; }
     if (command === "/export") { openExportPanel(argument); return; }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openVideo, project, selection, settings.agent.claudeModel, settings.agent.permissionMode, toggleChatFocus]);
+  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openProjectsBrowser, openVideo, project, selection, settings.agent.claudeModel, settings.agent.permissionMode, toggleChatFocus]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -467,6 +491,8 @@ export function App({ initialPath }: { initialPath?: string }) {
 
     setPlaying(false); setLoader({ source: agentModel, stage: "Understanding your request" });
     try {
+      await project.nameFromFirstRequest(request);
+      await project.register();
       await project.addChat("user", request);
       const before = project.current.id;
       const result = await runEditorAgent({
@@ -547,6 +573,22 @@ export function App({ initialPath }: { initialPath?: string }) {
       } else if (choice.allowCustom && character && !key.ctrl && !key.meta && !key.tab) {
         const text = character.replace(/[\r\n]+/g, " ");
         setChoicePanel((current) => ({ ...current, customActive: true, customText: text, customCursor: text.length }));
+      }
+      return;
+    }
+    if (overlay === "projects") {
+      if (key.escape || key.leftArrow) { setOverlay(null); return; }
+      if (key.upArrow || key.downArrow || key.tab) {
+        if (projects.length > 0) setProjectIndex((value) => (value + (key.upArrow ? -1 : 1) + projects.length) % projects.length);
+        return;
+      }
+      if (key.return || key.rightArrow) {
+        const selected = projects[projectIndex];
+        if (selected) {
+          setOverlay(null);
+          void openVideo(selected.sourcePath, selected.projectDir);
+        }
+        return;
       }
       return;
     }
@@ -785,7 +827,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   ) : <ChatPanel {...chatView} height={visibleConversationRows} width={terminal.columns - 2} focused={chatFocused} />;
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Box justifyContent="space-between"><Text bold color="magenta">DumbEditor</Text><Text dimColor>{project ? `${basename(project.snapshot.sourcePath)} · ${project.current.id}` : "No video"}</Text></Box>
+      <Box justifyContent="space-between"><Text bold color="magenta">DumbEditor</Text><Text dimColor wrap="truncate-end">{project ? `${project.name} · ${project.current.id}` : "No video"}</Text></Box>
       {chatFocused ? conversationPanel : <>
         <Box height={layout.playerRows} minHeight={layout.playerRows} flexDirection="row">
         {overlay === "help" ? <Help model={agentModel} /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} />
@@ -796,6 +838,9 @@ export function App({ initialPath }: { initialPath?: string }) {
           : overlay === "music" ? <MusicPanel tracks={musicTracks} query={musicQuery} selectedIndex={musicIndex}
               selectedId={selectedMusicId} previewId={previewMusicId} width={terminal.columns - 2} height={layout.playerRows} />
           : overlay === "export" ? <ExportPanel state={exportPanel} width={terminal.columns - 2} height={layout.playerRows} />
+          : overlay === "projects" ? <ProjectsPanel projects={projects} selectedIndex={projectIndex}
+              {...(project ? { activeProjectDir: project.snapshot.projectDir } : {})}
+              width={terminal.columns - 2} height={layout.playerRows} />
           : overlay === "assets" ? <AssetPanel assets={assets} selectedIndex={assetIndex} playing={assetPlaying}
               onPlaybackEnd={stopAssetPlayback}
               width={terminal.columns - 2} height={layout.playerRows} />
@@ -805,6 +850,7 @@ export function App({ initialPath }: { initialPath?: string }) {
               width={terminal.columns - 2} height={layout.playerRows} />
           : <>
             {layout.leftSidebarColumns > 0 && <ProjectSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""}
+              projectName={project?.name ?? "No project"}
               model={settings.models.openai.text} permissionMode={settings.agent.permissionMode} usage={usage} versionLimit={project?.versionLimit ?? 5}
               width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
@@ -850,6 +896,7 @@ function overlayHint(overlay: Exclude<Overlay, null>): string {
   if (overlay === "model") return "Model picker active · use the keyboard in the popup";
   if (overlay === "music") return "Music browser active · search, preview, and select in the popup";
   if (overlay === "export") return "Export popup active · choose format and compression";
+  if (overlay === "projects") return "Project browser active · choose a saved editing session";
   if (overlay === "assets") return "Asset browser active · browse, preview, or type to return to chat";
   if (overlay === "approval") return "Approval required · review the request above";
   if (overlay === "choice") return "Choice picker active · select an option or type a custom answer";

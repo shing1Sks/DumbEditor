@@ -7,6 +7,7 @@ import type { VersionEntry } from "../types.js";
 export function ProjectSidebar(props: {
   versions: VersionEntry[];
   currentId: string;
+  projectName: string;
   model: string;
   permissionMode: "ask" | "auto";
   usage: UsageSummary;
@@ -14,11 +15,12 @@ export function ProjectSidebar(props: {
   width: number;
   height: number;
 }) {
-  const room = Math.max(1, props.height - 10);
+  const room = Math.max(1, props.height - 11);
   const visible = props.versions.slice(0, room);
   return (
     <Box width={props.width} height={props.height} flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
-      <Text bold color="cyan">Session</Text>
+      <Text bold color="cyan">Project</Text>
+      <Text wrap="truncate-end">{props.projectName}</Text>
       <Text wrap="truncate-end">{props.model}</Text>
       <Text dimColor>Permissions: {props.permissionMode}</Text>
       <Text color="yellow" wrap="truncate-end">{props.model} {formatUsd(props.usage.lunaUsd)}</Text>

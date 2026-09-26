@@ -55,7 +55,7 @@ if (args[0] === "--fresh") {
     console.error("Usage: dumbeditor --fresh <video>");
     process.exit(1);
   }
-  await ProjectStore.clean(source).catch((error: unknown) => {
+  await ProjectStore.fresh(source).catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });
@@ -133,8 +133,8 @@ Usage:
   dumbeditor <video>    Open a video in the editor
   dumbeditor            Show the project overview and next steps
   dumbeditor setup      Configure provider keys and the local agent sandbox
-  dumbeditor clean <video> Remove saved project state; preserve the source
-  dumbeditor --fresh <video> Clean the project and open the source immediately
+  dumbeditor clean <video> Permanently remove saved project state; preserve the source
+  dumbeditor --fresh <video> Archive the current project and start a clean session
   dumbeditor --help     Show this complete reference
   dumbeditor --version  Print the installed version
 
@@ -159,6 +159,7 @@ Editor commands:
   /mute <FROM> <TO>
   /crop <WIDTH>x<HEIGHT> [X,Y]
   /open <path>       Open a video
+  /projects          Browse and reopen saved projects
   /version [all]     Show version history
   /version-limits [N] Show or set retained edit versions (default: 5)
   /revert <id>       Switch to a saved version

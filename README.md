@@ -55,7 +55,9 @@ npm run dev -- video.mp4
 
 The first no-argument launch explains why DumbEditor was built and how to start. Later no-argument launches show a short project overview. `dumbeditor --help` prints the full CLI and editor reference.
 
-DumbEditor restores the saved project associated with a source path. Use `dumbeditor --fresh <video>` to delete that source's generated versions, chat, and agent workspace and immediately reopen the untouched source. `dumbeditor clean <video>` performs the same cleanup and exits. Neither command deletes or modifies the source video.
+DumbEditor restores the active project associated with a source path. Use `dumbeditor --fresh <video>` to archive any meaningful current project and start a clean session from the untouched source. Archived sessions remain available through `/projects`. `dumbeditor clean <video>` permanently removes only the active project state and exits; archived projects are retained. Neither command deletes or modifies the source video.
+
+Projects receive a readable name from the first natural-language editing request plus their creation date and time. Before that first request, DumbEditor uses the source filename and creation time. A user-level project registry remembers projects opened in different folders, while `/projects` also discovers archived sessions beside the active source.
 
 `dumbeditor setup` asks for a required OpenAI key plus optional OpenRouter and Anthropic keys with hidden input. It stores them in `~/.dumbeditor/.env`. Model choices, the Claude harness model, and the permission mode live in `~/.dumbeditor/settings.json`. On Windows, setup also performs the one-time local sandbox installation with one UAC prompt. Setup managed config takes precedence over a current-directory `.env` and the package development `.env`. Secrets are excluded from Git.
 
@@ -104,6 +106,7 @@ Type `/` to open the scrollable command menu. Use Up and Down to choose, then Ta
 /mute <FROM> <TO>
 /crop <WIDTH>x<HEIGHT> [X,Y]
 /open <VIDEO PATH>
+/projects
 /version [all]
 /version-limits [1-100]
 /revert <VERSION>
@@ -126,6 +129,10 @@ Type `/` to open the scrollable command menu. Use Up and Down to choose, then Ta
 Time arguments accept seconds, `mm:ss`, `hh:mm:ss`, `start`, `end`, `playhead`, `in`, and `out`.
 
 `/version-limits 10` keeps the ten newest rendered versions plus the original. The default is five. The source is never overwritten or pruned.
+
+### Project browser
+
+`/projects` opens the saved-project browser. Use Up and Down to move, Enter to open a project, and Escape to return to the active editor. Each row shows the project name, source video, retained version count, and active version. Starting with `--fresh` archives the previous meaningful session so it can be reopened here.
 
 ### Export popup
 
@@ -226,6 +233,9 @@ Each source has a project directory beside it:
       assets.json
       assets/
       files/
+
+.dumbeditor/<video-name>-<hash>-<archive-time>/
+  ...archived project session...
 ```
 
 The readable transcript stays in `chat.jsonl`. Raw response items and tool results are appended to the agent ledger. Generated assets and supporting files persist in the project workspace.
