@@ -181,6 +181,8 @@ After selection, ask the editor agent to use the selected background music. It d
 | `Ctrl+C` | Quit and terminate preview processes |
 | `Shift+A` | Open or close the project asset browser |
 
+While an agent request runs, its current stage appears in the header above the video. Chat scrolling, seeking, volume, and play/pause remain available during planning, tool review, transcription, and asset generation. DumbEditor pauses preview transport only while FFmpeg is rendering or validating a changed video and while the new version is being saved.
+
 ### Assets and cost tracking
 
 The right sidebar lists generated images, video, speech, music, subtitles, and agent workspace files. Each generated asset records its provider model and cost when the provider returns billing data; estimates are marked with `~`. Catalog and local assets are shown as free. Press `Shift+A` or run `/assets` to browse the full list, use Up and Down to select an asset, and press Space to play audio, music, or video. Image and video assets have an inline preview. Start typing to close the browser, restore the main video player, and continue the text in chat.

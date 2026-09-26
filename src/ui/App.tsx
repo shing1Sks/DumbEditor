@@ -37,6 +37,7 @@ import { Timeline } from "./Timeline.js";
 import { chatViewport, inputViewport, moveInputCursorVertically } from "./text-layout.js";
 import { clearRetainedTerminalLayer } from "./terminal-layers.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
+import { isVideoMutationStage } from "./work-state.js";
 
 type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | "projects" | "approval" | "choice" | null;
 interface LoaderState { source: string; stage: string }
@@ -102,6 +103,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   }, []);
 
   const busy = loader !== null;
+  const videoMutationActive = loader !== null && isVideoMutationStage(loader.stage);
   const previewBackend = useMemo(() => activePreviewBackend(), []);
   const inputMetrics = useMemo(() => inputViewport(input, inputCursor, Math.max(8, terminal.columns - 6)), [input, inputCursor, terminal.columns]);
   const layout = useMemo(() => editorLayout(terminal, media, previewBackend, inputMetrics.rows), [terminal, media, previewBackend, inputMetrics.rows]);
@@ -133,6 +135,10 @@ export function App({ initialPath }: { initialPath?: string }) {
       .then((value) => { setSettings(value); setSettingsReady(true); })
       .catch((error) => { setSettingsReady(true); setStatus(errorMessage(error)); });
   }, []);
+
+  useEffect(() => {
+    if (videoMutationActive) setPlaying(false);
+  }, [videoMutationActive]);
   useEffect(() => {
     if (overlay !== "model") { setModelOverlayReady(false); return; }
     setModelOverlayReady(false);
@@ -501,7 +507,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (request.startsWith("/")) { try { await handleCommand(request); } catch (error) { await answer(errorMessage(error)); } return; }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
 
-    setPlaying(false); setLoader({ source: agentModel, stage: "Understanding your request" });
+    setLoader({ source: agentModel, stage: "Understanding your request" });
     try {
       await project.nameFromFirstRequest(request);
       await project.register();
@@ -769,7 +775,22 @@ export function App({ initialPath }: { initialPath?: string }) {
     }
     if (key.pageUp) { setChatScrollRows((value) => value + chatPageRows); return; }
     if (key.pageDown) { setChatScrollRows((value) => Math.max(0, value - chatPageRows)); return; }
-    if (busy) return;
+    if (busy) {
+      if (key.upArrow) { setChatScrollRows((value) => value + 1); return; }
+      if (key.downArrow) { setChatScrollRows((value) => Math.max(0, value - 1)); return; }
+      if (!videoMutationActive && key.leftArrow) { setPlaying(false); movePlayhead(currentTimeRef.current - 5); return; }
+      if (!videoMutationActive && key.rightArrow) { setPlaying(false); movePlayhead(currentTimeRef.current + 5); return; }
+      if (!videoMutationActive && key.ctrl && character === "p") {
+        if (media) {
+          if (playing) setCurrentTime(currentTimeRef.current);
+          setPlaying((value) => !value);
+        }
+        return;
+      }
+      if (character === "+" || character === "=") { setVolume((value) => Math.min(100, value + 5)); return; }
+      if (character === "-") { setVolume((value) => Math.max(0, value - 5)); return; }
+      return;
+    }
     if (key.shift && character.toLowerCase() === "a") {
       openAssetBrowser();
       return;
@@ -839,7 +860,14 @@ export function App({ initialPath }: { initialPath?: string }) {
   ) : <ChatPanel {...chatView} height={visibleConversationRows} width={terminal.columns - 2} focused={chatFocused} />;
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Box justifyContent="space-between"><Text bold color="magenta">DumbEditor</Text><Text dimColor wrap="truncate-end">{project ? `${project.name} · ${project.current.id}` : "No video"}</Text></Box>
+      <Box justifyContent="space-between">
+        <Text bold color="magenta">DumbEditor</Text>
+        {loader
+          ? <Text color={loader.source === "Sandbox" ? "cyan" : "yellow"} wrap="truncate-end">
+              {LOADER_MARK} {loader.source === "Sandbox" ? "⬡ SANDBOX" : loader.source} · {loader.stage}{videoMutationActive ? " · video updating" : ""}
+            </Text>
+          : <Text dimColor wrap="truncate-end">{project ? `${project.name} · ${project.current.id}` : "No video"}</Text>}
+      </Box>
       {chatFocused ? conversationPanel : <>
         <Box height={layout.playerRows} minHeight={layout.playerRows} flexDirection="row">
         {overlay === "help" ? <Help model={agentModel} /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} />
@@ -887,16 +915,13 @@ export function App({ initialPath }: { initialPath?: string }) {
         </Box>
         {conversationPanel}
       </>}
-      {loader ? <Box height={3} minHeight={3} borderStyle="round" borderColor="yellow" paddingX={1} overflow="hidden">
-          <Text color={loader.source === "Sandbox" ? "cyan" : "yellow"} wrap="truncate-end">{LOADER_MARK} {loader.source === "Sandbox" ? "⬡ SANDBOX" : loader.source} · {loader.stage}</Text>
-        </Box>
-        : overlay ? <Box height={3} minHeight={3} borderStyle="round" borderColor={overlay === "approval" ? "yellow" : "gray"} paddingX={1} overflow="hidden">
+      {overlay ? <Box height={3} minHeight={3} borderStyle="round" borderColor={overlay === "approval" ? "yellow" : "gray"} paddingX={1} overflow="hidden">
             <Text color={overlay === "approval" ? "yellow" : "cyan"} wrap="truncate-end">{overlayHint(overlay)}</Text>
           </Box>
         : <InputPanel value={input} cursor={inputCursor} width={terminal.columns - 2} busy={busy} />}
       <Box height={1} minHeight={1} overflow="hidden">
         <Text dimColor wrap="truncate-end">{loader
-          ? `${loader.source} is working · ${agentModel} ${formatUsd(usage.lunaUsd)} · Harness ${formatUsd(usage.harnessUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)}`
+          ? `${loader.source} is working · ${agentModel} ${formatUsd(usage.lunaUsd)} · Harness ${formatUsd(usage.harnessUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · ${videoMutationActive ? "video updating · ↑/↓ chat" : "↑/↓ chat · ←/→ seek · Ctrl+P play"}`
           : `${status} · ${agentModel} ${formatUsd(usage.lunaUsd)} · Harness ${formatUsd(usage.harnessUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · Enter to send · Ctrl+C to quit`}</Text>
       </Box>
     </Box>
