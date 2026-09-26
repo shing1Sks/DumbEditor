@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 import { EXPORT_PRESET_DETAILS, type ExportFormat, type ExportPreset } from "../core/export.js";
 

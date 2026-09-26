@@ -1,4 +1,3 @@
-import React from "react";
 import { basename } from "node:path";
 import { Box, Text } from "ink";
 import type { ProjectSummary } from "../core/project.js";

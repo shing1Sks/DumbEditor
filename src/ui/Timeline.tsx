@@ -1,4 +1,3 @@
-import React from "react";
 import { Text } from "ink";
 import type { Selection } from "../types.js";
 import { formatTime } from "../core/time.js";

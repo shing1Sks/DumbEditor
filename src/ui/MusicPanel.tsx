@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 import type { MusicTrack } from "../core/music-catalog.js";
 

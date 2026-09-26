@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 import type { AgentAsset } from "../core/agent-workspace.js";
 import { formatUsd, type UsageSummary } from "../core/usage.js";

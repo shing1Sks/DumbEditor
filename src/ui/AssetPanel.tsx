@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { basename } from "node:path";
 import { Box, Text } from "ink";
 import type { AgentAsset } from "../core/agent-workspace.js";

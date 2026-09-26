@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 import type { ProviderModel } from "../core/models.js";
 import type { DumbEditorSettings, ModelProvider, ModelSlot, OpenAISlot, OpenRouterSlot } from "../core/settings.js";

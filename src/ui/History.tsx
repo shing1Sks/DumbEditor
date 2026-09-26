@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 import type { VersionEntry } from "../types.js";
 import { formatTime } from "../core/time.js";

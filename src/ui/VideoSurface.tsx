@@ -8,7 +8,6 @@ import {
   previewRenderSize,
   streamRawPreview,
   type PreviewBackend,
-  type PreviewSize,
 } from "../core/media.js";
 import { formatTime } from "../core/time.js";
 import { clearRetainedTerminalLayer, retainTerminalLayer, writeTerminalLayer } from "./terminal-layers.js";

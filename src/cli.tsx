@@ -1,4 +1,3 @@
-import React from "react";
 import { render } from "ink";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -98,7 +97,10 @@ try {
 
 function overviewMessage(installedVersion: string): string {
   return `DumbEditor ${installedVersion}
-Agent-first video editing in your terminal.
+The video editor in the DUMB tools family.
+
+DUMB means Direct Unbounded Media Builder: minimal, open source, agent-first
+software that turns intent into finished work without a complex app in between.
 
 Describe an edit in plain language or use a direct slash command. Every edit is
 versioned, reversible, and rendered locally with FFmpeg.
@@ -114,10 +116,12 @@ Learn more:
 function firstLaunchMessage(installedVersion: string): string {
   return `Hello from DumbEditor ${installedVersion}.
 
-Simple video edits should not require a wall of buttons, tutorials, or a pile of
-AI credits spent learning an interface. DumbEditor is an agent-first editor: tell
-it what to change, preview the result in your terminal, and keep every edit
-reversible.
+DUMB means Direct Unbounded Media Builder. It is a family of minimal, open source,
+agent-first tools built around what you want to make.
+
+DumbEditor is the first one. Tell it what to change, preview the result in your
+terminal, and keep every edit reversible. No wall of buttons. No tutorial before
+the first cut. No separate subscription for every step.
 
 1. Run:  dumbeditor setup  (keys + one-time local agent sandbox)
 2. Open: dumbeditor <video>
@@ -127,7 +131,7 @@ Run dumbeditor --help for the complete reference.`;
 }
 
 function helpMessage(installedVersion: string): string {
-  return `DumbEditor ${installedVersion} - agent-first video editing in your terminal
+  return `DumbEditor ${installedVersion} - Direct Unbounded Media Builder for video
 
 Usage:
   dumbeditor <video>    Open a video in the editor

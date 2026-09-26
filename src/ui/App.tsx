@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { extname, resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import type { ChildProcess } from "node:child_process";

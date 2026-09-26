@@ -1,65 +1,129 @@
 # DumbEditor
 
-**An agent first video editor that lives entirely in your terminal.**
-
-DumbEditor exists for edits that should not require a wall of buttons, several tutorials, or a credit hungry AI interface. Describe the result you want, preview it in the terminal, and keep every render reversible. FFmpeg performs edits locally; your configured OpenAI or OpenRouter base agent plans and checks multi-step work.
-
-## V1 features
-
-- High resolution Sixel video preview in supported terminals, with an ANSI fallback
-- Stable player, timeline, chat, combined session/version sidebar, and asset sidebar
-- Row-bounded scrollable chat, a multiline composer, and native agent choice prompts with a custom answer field
-- Playback, five second seeking, marks, preview audio, and volume controls
-- A provider-selectable editor-agent tool loop that can inspect frames and chain several edits
-- Ask and automatic permission modes for model changes, custom provider parameters, and coding-harness delegation
-- Optional Claude Agent SDK specialist for workspace scripts and tools that do not fit the prepared edit layer
-- Remove, keep, speed, mute, and crop tools
-- Automatic speech transcription and burned subtitles, plus text overlays, timed image overlays, fades, and ranged visual effects
-- Background music mixing with original audio, volume, looping, trim, and delayed start
-- Image, speech, music, and video asset generation through configured provider models
-- A general FFmpeg composition tool for edits beyond the prepared actions
-- Searchable CC BY 4.0 background music with preview, persistent selection, source, and attribution
-- Project workspace for generated assets, subtitle files, notes, and scripts
-- Immutable versions with undo, revert, branching, export, and configurable retention
-- Interactive OpenAI and OpenRouter model catalogs with capability specific pricing units
-- Loaders for planning, provider generation, FFmpeg rendering, output checks, and version commits
-- Persistent editor-model, harness, and asset cost ledger with per-asset model and generation cost
-
-## Requirements
-
-- Node.js 20.11 or newer
-- `ffmpeg`, `ffprobe`, and optionally `ffplay` on `PATH`
-- Windows Terminal 1.23+ or another Sixel terminal with synchronized output for a stable high resolution preview
-- An OpenAI API key for the main editor agent
-- An optional OpenRouter key for configured image, music, and video generation
-- An optional Anthropic API key for the Claude coding harness
-
-## Install and run
+**Direct, agent-first video editing in the terminal.**
 
 ```bash
+npx dumbeditor@latest setup
+npx dumbeditor@latest "./video.mp4"
+```
+
+DumbEditor is the first tool in **DUMB: Direct Unbounded Media Builder**.
+
+DUMB is a growing family of minimal, open source, agent-first creative tools. DumbEditor starts with video. The same idea can extend to files, presentations, spreadsheets, painting, animation, and visualization without turning each job into another large application or subscription.
+
+## Why DUMB exists
+
+Most creative software exposes its internal machinery first: panels, timelines, menus, modes, and hundreds of controls. The user has to learn the application before making the thing they already understand.
+
+Adding a chat box to that interface does not make the software AI native. An AI-native tool begins with intent. It gives an agent the context, tools, workspace, permissions, and feedback loop required to finish the work, while keeping deterministic controls available when they are faster.
+
+DumbEditor follows four rules:
+
+1. **Say the result.** Write a normal request instead of translating it into a sequence of UI operations.
+2. **Use direct commands when useful.** Slash commands handle precise edits immediately and remain discoverable with `/`.
+3. **Keep work local and reversible.** FFmpeg performs the edit, source media stays untouched, and every render becomes a version.
+4. **Make cost and agency visible.** Model choices, permissions, generated assets, provenance, and running costs stay in the editor instead of disappearing behind a subscription.
+
+The goal is capable software with a small surface: one terminal, one conversation, direct controls, and an agent that can inspect its output.
+
+## Install
+
+### Run without installing
+
+`npx` downloads the current package into npm's cache and runs its single `dumbeditor` executable:
+
+```bash
+npx dumbeditor@latest setup
+npx dumbeditor@latest "./video.mp4"
+npx dumbeditor@latest --help
+```
+
+Use `@latest` to request the current npm release. On first use, npm may ask permission to download the package.
+
+### Install the command globally
+
+For regular use:
+
+```bash
+npm install --global dumbeditor
+dumbeditor setup
+dumbeditor "./video.mp4"
+```
+
+### Run from source
+
+```bash
+git clone https://github.com/shing1Sks/DumbEditor.git
+cd DumbEditor
 npm install
 npm run build
 npm link
-
-dumbeditor
 dumbeditor setup
-dumbeditor video.mp4
-dumbeditor --fresh video.mp4
+dumbeditor "./video.mp4"
 ```
 
-For development:
+For development, use `npm run dev -- "./video.mp4"`.
+
+## Requirements and platform support
+
+- Node.js 20.11 or newer
+- `ffmpeg` and `ffprobe` on `PATH`
+- `ffplay` on `PATH` for preview audio and catalog music auditioning
+- An OpenAI API key for the default editor agent
+- An optional OpenRouter key for alternate agents and image, music, or video generation
+- An optional Anthropic API key for the Claude coding harness
+
+Common FFmpeg installations:
+
+```powershell
+# Windows
+winget install Gyan.FFmpeg
+```
 
 ```bash
-npm run dev -- video.mp4
+# macOS with Homebrew
+brew install ffmpeg
+
+# Ubuntu / Debian
+sudo apt update && sudo apt install ffmpeg
 ```
 
-The first no-argument launch explains why DumbEditor was built and how to start. Later no-argument launches show a short project overview. `dumbeditor --help` prints the full CLI and editor reference.
+| Platform | Core editor | Inline preview | Agent script sandbox |
+| --- | --- | --- | --- |
+| Windows 10/11 | Supported and currently developed here | High resolution Sixel in recent Windows Terminal; ANSI fallback | One-time setup with a UAC prompt |
+| macOS | Portable Node and FFmpeg path; covered by build/startup CI | Sixel when advertised by the terminal; ANSI fallback | Available when Sandbox Runtime dependencies pass their check |
+| Linux | Portable Node and FFmpeg path; full test suite runs in CI | Sixel when advertised by the terminal; ANSI fallback | Available when Sandbox Runtime dependencies pass their check |
 
-DumbEditor restores the active project associated with a source path. Use `dumbeditor --fresh <video>` to archive any meaningful current project and start a clean session from the untouched source. Archived sessions remain available through `/projects`. `dumbeditor clean <video>` permanently removes only the active project state and exits; archived projects are retained. Neither command deletes or modifies the source video.
+The prepared editing tools, versions, exports, model calls, and ANSI renderer do not require the optional script sandbox. Set `DUMBEDITOR_PREVIEW=blocks` to force the universal ANSI renderer.
 
-Projects receive a readable name from the first natural-language editing request plus their creation date and time. Before that first request, DumbEditor uses the source filename and creation time. A user-level project registry remembers projects opened in different folders, while `/projects` also discovers archived sessions beside the active source.
+## First setup
 
-`dumbeditor setup` asks for a required OpenAI key plus optional OpenRouter and Anthropic keys with hidden input. It stores them in `~/.dumbeditor/.env`. Model choices, the Claude harness model, and the permission mode live in `~/.dumbeditor/settings.json`. On Windows, setup also performs the one-time local sandbox installation with one UAC prompt. Setup managed config takes precedence over a current-directory `.env` and the package development `.env`. Secrets are excluded from Git.
+`dumbeditor setup` securely prompts for provider keys. It writes them to `~/.dumbeditor/.env`; model choices and permission mode live in `~/.dumbeditor/settings.json`. Keys are not stored in projects, printed in the interface, passed to sandbox scripts, or committed to this repository.
+
+The first no-argument launch explains DUMB and shows the two startup commands. Later launches show a compact project overview. `dumbeditor --help` prints the full CLI and editor reference.
+
+## What ships today
+
+- High resolution Sixel video preview in supported terminals, with an ANSI fallback
+- Stable player, timeline, scrollable conversation, multiline composer, version sidebar, and asset browser
+- Plain-language multi-step editing plus discoverable deterministic slash commands
+- Remove, keep, speed, mute, crop, text, image overlay, fade, effect, subtitle, music, and export tools
+- A general FFmpeg composition layer for work beyond the prepared actions
+- Frame inspection before and after edits, including a required final visual audit
+- Automatic transcription, speaker-aware subtitle options, and burned captions
+- Image, speech, music, and video asset generation through configured provider models
+- Searchable CC BY 4.0 music with preview, source, license, attribution, and modification records
+- Ask and automatic permission modes for model and parameter changes
+- Optional Claude coding harness and isolated Python or JavaScript workspace tools
+- Immutable versions with undo, revert, branches, export, and configurable retention
+- Interactive model catalogs with capability-specific prices
+- Persistent agent, harness, and asset cost ledgers
+
+## Projects and source safety
+
+DumbEditor restores the project associated with a source path. `dumbeditor --fresh <video>` archives a meaningful current project and starts from the untouched source. `/projects` reopens active and archived sessions. `dumbeditor clean <video>` permanently removes only active derived project state. None of these commands modifies or deletes the source video.
+
+Projects receive a readable name from the first natural-language request plus their creation date and time. Before that request, the source filename is used. A user-level registry remembers projects opened in different folders.
 
 ## Ask the editor agent
 
@@ -149,7 +213,7 @@ Use Tab to move between destination, format, and compression. Use the arrow keys
 
 ### Music browser
 
-`/bg-music` opens a terminal popup. Type to search by title, genre, mood, artist, or description. Use Up and Down to move, Space to preview or stop, Enter to select, Delete to clear the selection, and Escape to close. The V1 catalog contains explicitly attributed Kevin MacLeod tracks under CC BY 4.0 and keeps each source page and license with the track.
+`/bg-music` opens a terminal popup. Type to search by title, genre, mood, artist, or description. Use Up and Down to move, Space to preview or stop, Enter to select, Delete to clear the selection, and Escape to close. The built-in catalog contains explicitly attributed Kevin MacLeod tracks under CC BY 4.0 and keeps each source page and license with the track.
 
 After selection, ask the editor agent to use the selected background music. It downloads the chosen track into the project workspace, records the attribution, and mixes it through the validated local audio tool.
 
@@ -196,6 +260,10 @@ DumbEditor chooses Sixel in Windows Terminal and terminals that advertise Sixel 
 ```powershell
 $env:DUMBEDITOR_PREVIEW = "blocks"
 dumbeditor video.mp4
+```
+
+```bash
+DUMBEDITOR_PREVIEW=blocks dumbeditor video.mp4
 ```
 
 `DUMBEDITOR_CELL_WIDTH` and `DUMBEDITOR_CELL_HEIGHT` override the terminal cell size used for Sixel fitting.
@@ -253,10 +321,12 @@ The packaged [`skills`](skills) are loaded into the editor agent on every run. T
 ## Development
 
 ```bash
+npm install
 npm run quality
+npm run release:check
 ```
 
-The test suite renders synthetic media with FFmpeg and checks pixels, PCM audio, version commits, input validation, catalog selection, preview lifecycle, terminal text layout, and the editor agent's function-call loop. It does not spend provider credits.
+`npm run release:check` runs the full quality gate and shows the exact npm package contents without publishing. The test suite renders synthetic media with FFmpeg and checks pixels, PCM audio, version commits, input validation, catalog selection, preview lifecycle, terminal text layout, and the editor agent's function-call loop. It does not spend provider credits.
 
 ## License
 

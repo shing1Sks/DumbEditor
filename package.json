@@ -1,7 +1,7 @@
 {
   "name": "dumbeditor",
   "version": "0.1.0",
-  "description": "An agent-first video editor that lives entirely in your terminal.",
+  "description": "A direct, agent-first video editor that lives entirely in your terminal.",
   "type": "module",
   "bin": {
     "dumbeditor": "dist/cli.js"
@@ -18,6 +18,7 @@
     "dev": "tsx src/cli.tsx",
     "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/luna.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/transcription.test.js",
     "quality": "npm run check && npm test && npm run build",
+    "release:check": "npm run quality && npm pack --dry-run",
     "prepublishOnly": "npm run quality"
   },
   "keywords": [
@@ -25,9 +26,22 @@
     "cli",
     "ffmpeg",
     "terminal",
-    "ai"
+    "ai",
+    "agent-first",
+    "ai-native",
+    "sixel",
+    "open-source"
   ],
+  "author": "Shreyash Kumar Singh",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shing1Sks/DumbEditor.git"
+  },
+  "homepage": "https://github.com/shing1Sks/DumbEditor#readme",
+  "bugs": {
+    "url": "https://github.com/shing1Sks/DumbEditor/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
