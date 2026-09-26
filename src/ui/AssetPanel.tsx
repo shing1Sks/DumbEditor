@@ -18,7 +18,7 @@ export function AssetPanel(props: { assets: AgentAsset[]; selectedIndex: number;
         <Text bold color="cyan">Assets</Text>
         <Text dimColor>↑/↓ select · Space play · Shift+A/Esc close · type to chat</Text>
       </Box>
-      {props.assets.length === 0 ? <Text dimColor>No project assets yet. Ask Luna to create an image, sound, video, or subtitles.</Text> : (
+      {props.assets.length === 0 ? <Text dimColor>No project assets yet. Ask the editor agent to create an image, sound, video, or subtitles.</Text> : (
         <Box flexDirection="row" flexGrow={1}>
           <Box width={listWidth} flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
             {visible.map((asset, offset) => {
@@ -39,7 +39,7 @@ export function AssetPanel(props: { assets: AgentAsset[]; selectedIndex: number;
               {selected.license && <Text wrap="wrap">License: {selected.license}</Text>}
               {(selected.kind === "audio" || selected.kind === "music" || selected.kind === "video") &&
                 <Text color={props.playing ? "green" : "cyan"}>{props.playing ? "▶ playing preview" : "Space plays this asset"}</Text>}
-              {selected.kind === "image" && <Text color="cyan">Image saved and ready for Luna to place in the video.</Text>}
+              {selected.kind === "image" && <Text color="cyan">Image saved and ready for the editor agent to place in the video.</Text>}
               {(selected.kind === "image" || selected.kind === "video") &&
                 <VisualAssetPreview path={selected.path} video={selected.kind === "video"} playing={props.playing}
                   onPlaybackEnd={props.onPlaybackEnd}

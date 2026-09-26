@@ -20,3 +20,10 @@ test("uses wide terminal margins as balanced sidebars", () => {
   assert.equal(layout.leftSidebarColumns, layout.rightSidebarColumns);
   assert.equal(layout.videoColumns + layout.leftSidebarColumns + layout.rightSidebarColumns, 188);
 });
+
+test("keeps the player stable while the input grows into reserved rows", () => {
+  const singleLine = editorLayout({ columns: 150, rows: 50 }, media, "sixel", 1);
+  const multiline = editorLayout({ columns: 150, rows: 50 }, media, "sixel", 4);
+  assert.equal(singleLine.playerRows, multiline.playerRows);
+  assert.equal(singleLine.chatRows - multiline.chatRows, 3);
+});

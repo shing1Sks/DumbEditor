@@ -36,7 +36,7 @@ export async function executeCustomRender(options: CustomRenderOptions) {
 
   let committed = false;
   try {
-    options.onStage?.("Rendering Luna's custom FFmpeg composition");
+    options.onStage?.("Rendering the agent's custom FFmpeg composition");
     await runProcess("ffmpeg", args, {
       timeoutMs: 30 * 60_000,
       maxOutputBytes: 8_000_000,

@@ -135,9 +135,10 @@ Usage:
   dumbeditor --version  Print the installed version
 
 Controls:
-  Space          Play or pause
+  Ctrl+P         Play or pause
   Left / Right   Seek 5 seconds
   Up / Down      Preview volume, or navigate command suggestions
+  PageUp/PageDown Scroll the bounded chat history
   [ / ]          Mark selection in / out
   Tab            Complete the selected slash command
   Enter          Send a request or complete a slash command

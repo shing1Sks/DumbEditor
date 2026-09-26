@@ -2,14 +2,15 @@
 
 **An agent first video editor that lives entirely in your terminal.**
 
-DumbEditor exists for edits that should not require a wall of buttons, several tutorials, or a credit hungry AI interface. Describe the result you want, preview it in the terminal, and keep every render reversible. FFmpeg performs edits locally; GPT-6 Luna plans and checks multi-step work.
+DumbEditor exists for edits that should not require a wall of buttons, several tutorials, or a credit hungry AI interface. Describe the result you want, preview it in the terminal, and keep every render reversible. FFmpeg performs edits locally; your configured OpenAI editor model plans and checks multi-step work.
 
 ## V1 features
 
 - High resolution Sixel video preview in supported terminals, with an ANSI fallback
 - Stable player, timeline, chat, combined session/version sidebar, and asset sidebar
+- Row-bounded scrollable chat, a multiline composer, and native agent choice prompts with a custom answer field
 - Playback, five second seeking, marks, preview audio, and volume controls
-- A real GPT-6 Luna tool loop that can inspect frames and chain several edits
+- A real OpenAI editor-agent tool loop that can inspect frames and chain several edits
 - Ask and automatic permission modes for model changes, custom provider parameters, and coding-harness delegation
 - Optional Claude Agent SDK specialist for workspace scripts and tools that do not fit the prepared edit layer
 - Remove, keep, speed, mute, and crop tools
@@ -22,14 +23,14 @@ DumbEditor exists for edits that should not require a wall of buttons, several t
 - Immutable versions with undo, revert, branching, export, and configurable retention
 - Interactive OpenAI and OpenRouter model catalogs with capability specific pricing units
 - Loaders for planning, provider generation, FFmpeg rendering, output checks, and version commits
-- Persistent Luna and asset cost ledger with per-asset model and generation cost
+- Persistent editor-model, harness, and asset cost ledger with per-asset model and generation cost
 
 ## Requirements
 
 - Node.js 20.11 or newer
 - `ffmpeg`, `ffprobe`, and optionally `ffplay` on `PATH`
 - Windows Terminal 1.22+ or another Sixel terminal for high resolution preview
-- An OpenAI API key for Luna
+- An OpenAI API key for the main editor agent
 - An optional OpenRouter key for configured image, music, and video generation
 - An optional Anthropic API key for the Claude coding harness
 
@@ -58,9 +59,9 @@ DumbEditor restores the saved project associated with a source path. Use `dumbed
 
 `dumbeditor setup` asks for a required OpenAI key plus optional OpenRouter and Anthropic keys with hidden input. It stores them in `~/.dumbeditor/.env`. Model choices, the Claude harness model, and the permission mode live in `~/.dumbeditor/settings.json`. On Windows, setup also performs the one-time local sandbox installation with one UAC prompt. Setup managed config takes precedence over a current-directory `.env` and the package development `.env`. Secrets are excluded from Git.
 
-## Ask Luna
+## Ask the editor agent
 
-Write normal requests. Luna receives the active version, media details, playhead, marks, and project conversation. It can inspect sampled frames, call several tools in sequence, recover from a failed tool call, and summarize the versions and assets it created. After a rendered mutation, the runtime requires Luna to inspect output frames before it can finish the run.
+Write normal requests. The configured editor model receives the active version, media details, playhead, marks, and project conversation. It can inspect sampled frames, call several tools in sequence, recover from a failed tool call, and summarize the versions and assets it created. After a rendered mutation, the runtime requires the model to inspect output frames before it can finish the run.
 
 ```text
 remove the first two seconds and mute the last five
@@ -72,7 +73,7 @@ use the background music I selected, loop it quietly under the whole video
 generate a five second establishing shot of a rainy city for this project
 ```
 
-The main editor agent is pinned to `gpt-6-luna`. The default economical asset models are:
+The main editor agent defaults to `gpt-6-luna` and follows the OpenAI editor choice made through `/model`. The default economical asset models are:
 
 | Capability | Default |
 | --- | --- |
@@ -86,11 +87,11 @@ The main editor agent is pinned to `gpt-6-luna`. The default economical asset mo
 
 Provider catalogs and prices change. `/model` loads the current catalog and displays each capability in its billing unit before selection.
 
-Luna may override a configured model and pass provider-specific parameters for one request. In the default `ask` permission mode, DumbEditor displays the provider, model, and parameters and waits for Allow once or Deny. `/permissions auto` lets DumbEditor proceed automatically. The selected defaults remain unchanged unless you change them through `/model`.
+The editor agent may override a configured specialist model and pass provider-specific parameters for one request. In the default `ask` permission mode, DumbEditor displays the provider, model, and parameters and waits for Allow once or Deny. `/permissions auto` lets DumbEditor proceed automatically. The selected defaults remain unchanged unless you change them through `/model`.
 
-For work that needs new code or an unfamiliar tool chain, Luna can delegate a bounded task to Claude Agent SDK. Claude works inside the current project's agent workspace, can read the active video, and uses its own tool permission classifier in auto mode. The integration is optional and only appears when an Anthropic key is configured.
+For work that needs new code or an unfamiliar tool chain, the editor agent can delegate a bounded task to Claude Agent SDK. Claude works inside the current project's agent workspace, can read the active video, and uses its own tool permission classifier in auto mode. The integration is optional and only appears when an Anthropic key is configured.
 
-When asked to add subtitles without a supplied file, Luna extracts the audio in short chunks, transcribes it with the configured OpenAI transcription model, creates a timed SRT in the project workspace, and burns it into a new version. Chunked processing keeps long recordings below individual upload limits. Cue timing is estimated within each chunk because the durable default transcription model returns text rather than word timestamps. Luna can request `gpt-4o-transcribe-diarize` when speaker labels are useful; the model switch goes through the active permission policy and produces speaker-timed SRT cues.
+When asked to add subtitles without a supplied file, the editor agent extracts the audio in short chunks, transcribes it with the configured OpenAI transcription model, creates a timed SRT in the project workspace, and burns it into a new version. Chunked processing keeps long recordings below individual upload limits. Cue timing is estimated within each chunk because the durable default transcription model returns text rather than word timestamps. The agent can request `gpt-4o-transcribe-diarize` when speaker labels are useful; the model switch goes through the active permission policy and produces speaker-timed SRT cues.
 
 ## Slash commands
 
@@ -142,7 +143,7 @@ Use Tab to move between destination, format, and compression. Use the arrow keys
 
 `/bg-music` opens a terminal popup. Type to search by title, genre, mood, artist, or description. Use Up and Down to move, Space to preview or stop, Enter to select, Delete to clear the selection, and Escape to close. The V1 catalog contains explicitly attributed Kevin MacLeod tracks under CC BY 4.0 and keeps each source page and license with the track.
 
-After selection, ask Luna to use the selected background music. Luna downloads the chosen track into the project workspace, records the attribution, and mixes it through the validated local audio tool.
+After selection, ask the editor agent to use the selected background music. It downloads the chosen track into the project workspace, records the attribution, and mixes it through the validated local audio tool.
 
 ### Model browser
 
@@ -158,12 +159,14 @@ After selection, ask Luna to use the selected background music. Luna downloads t
 
 | Input | Action |
 | --- | --- |
-| `Space` | Play or pause; preview or stop a track in the music popup |
+| `Ctrl+P` | Play or pause the main video |
+| `Space` | Type a space; preview or stop a track while the music or asset popup is active |
 | Left / Right | Seek five seconds; go back or choose in a popup |
 | Up / Down | Change volume or move through lists |
 | `[` / `]` | Set in and out marks |
 | `Tab` | Complete a command or move through a popup |
 | `Enter` | Send, complete, or select |
+| `PageUp` / `PageDown` | Scroll chat history without moving the input cursor |
 | `Esc` | Clear input or close a panel |
 | `Ctrl+C` | Quit and terminate preview processes |
 | `Shift+A` | Open or close the project asset browser |
@@ -172,7 +175,7 @@ After selection, ask Luna to use the selected background music. Luna downloads t
 
 The right sidebar lists generated images, video, speech, music, subtitles, and agent workspace files. Each generated asset records its provider model and cost when the provider returns billing data; estimates are marked with `~`. Catalog and local assets are shown as free. Press `Shift+A` or run `/assets` to browse the full list, use Up and Down to select an asset, and press Space to play audio, music, or video. Image and video assets have an inline preview. Start typing to close the browser, restore the main video player, and continue the text in chat.
 
-The chat footer shows the running Luna, harness, asset, and total costs. These values are stored in the source video's `.dumbeditor` project and survive restarts. Luna cost includes every Responses API round in a tool loop, including cached input and reasoning output reported by the API.
+The chat footer shows the configured editor model by name alongside its running cost, harness cost, asset cost, and total. These values are stored in the source video's `.dumbeditor` project and survive restarts. Editor-model cost includes every Responses API round in a tool loop, including cached input and reasoning output reported by the API.
 
 ## Preview backend
 
@@ -189,13 +192,14 @@ dumbeditor video.mp4
 
 ```mermaid
 flowchart LR
-  Prompt[Request + project state] --> Luna[GPT-6 Luna]
-  Luna --> Frames[Frame inspection]
-  Luna --> Assets[Asset providers]
-  Luna --> Tools[Validated edit tools]
-  Luna --> Compose[Custom FFmpeg composition]
-  Luna --> Claude[Optional Claude coding harness]
-  Luna --> Sandbox[Optional isolated scripts]
+  Prompt[Request + project state] --> Agent[Configured editor model]
+  Agent --> Choices[Native choice picker]
+  Agent --> Frames[Frame inspection]
+  Agent --> Assets[Asset providers]
+  Agent --> Tools[Validated edit tools]
+  Agent --> Compose[Custom FFmpeg composition]
+  Agent --> Claude[Optional Claude coding harness]
+  Agent --> Sandbox[Optional isolated scripts]
   Assets --> Workspace[Project workspace]
   Workspace --> Tools
   Tools --> FFmpeg
@@ -223,13 +227,13 @@ Each source has a project directory beside it:
 
 The readable transcript stays in `chat.jsonl`. Raw response items and tool results are appended to the agent ledger. Generated assets and supporting files persist in the project workspace.
 
-The agent uses prepared tools for common work and can build a custom FFmpeg filter graph for combinations that do not have a dedicated command. Filter graph inputs are limited to the active video and registered workspace assets. Luna can send multiple extracted frames to its vision input to inspect the source and audit each rendered result.
+The agent uses prepared tools for common work and can build a custom FFmpeg filter graph for combinations that do not have a dedicated command. Filter graph inputs are limited to the active video and registered workspace assets. It can send multiple extracted frames to its vision input to inspect the source and audit each rendered result. When a creative decision has several useful directions, the agent can open a native terminal choice picker and receive either a selected option or a custom answer before continuing.
 
-The optional Claude harness gives Luna a coding specialist with file, search, and shell tools scoped to the project's `agent/workspace/files` directory. Its shell runs in the Claude SDK sandbox with network disabled, unsandboxed commands forbidden, the active video and project assets readable, only that files directory writable, and provider credentials removed from child commands. DumbEditor owns the outer approval policy, version store, asset ledger, and cost ledger. Claude returns created workspace files to Luna; Luna remains responsible for applying validated edits and auditing the video output.
+The optional Claude harness gives the editor model a coding specialist with file, search, and shell tools scoped to the project's `agent/workspace/files` directory. Its shell runs in the Claude SDK sandbox with network disabled, unsandboxed commands forbidden, the active video and project assets readable, only that files directory writable, and provider credentials removed from child commands. DumbEditor owns the outer approval policy, version store, asset ledger, and cost ledger. Claude returns created workspace files to the editor model, which remains responsible for applying validated edits and auditing the video output.
 
 The agent can also write subtitle files, notes, and scripts inside the workspace. Python and JavaScript scripts run through Anthropic's lightweight Sandbox Runtime, the same open source runtime developed for Claude Code. It uses native OS isolation without a container: a dedicated restricted user and Windows Filtering Platform fence on Windows, Seatbelt on macOS, and bubblewrap plus seccomp on Linux. The active video is read-only, only the current agent workspace is writable, networking is disabled, and API keys are withheld. `dumbeditor setup` performs the one-time Windows sandbox installation with one UAC prompt.
 
-The packaged [`skills`](skills) document the verified video, asset, audio, music, and workspace workflows used by Luna.
+The packaged [`skills`](skills) document the verified video, asset, audio, music, and workspace workflows used by the editor agent.
 
 ## Development
 
@@ -237,7 +241,7 @@ The packaged [`skills`](skills) document the verified video, asset, audio, music
 npm run quality
 ```
 
-The test suite renders synthetic media with FFmpeg and checks pixels, PCM audio, version commits, input validation, catalog selection, preview lifecycle, and Luna's function-call loop. It does not spend provider credits.
+The test suite renders synthetic media with FFmpeg and checks pixels, PCM audio, version commits, input validation, catalog selection, preview lifecycle, terminal text layout, and the editor agent's function-call loop. It does not spend provider credits.
 
 ## License
 

@@ -47,6 +47,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   at: string;
+  /** Stable display identity for the model or editor component that produced the message. */
+  label?: string;
 }
 
 export interface Selection {

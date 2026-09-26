@@ -60,12 +60,12 @@ interface ResponsePayload {
 
 type InputItem = Record<string, unknown>;
 
-const MAIN_MODEL = "gpt-6-luna";
 const MAX_ROUNDS = 12;
 const MAX_TOOL_CALLS = 24;
 const MAX_MUTATIONS = 8;
 
 export async function runLunaAgent(options: {
+  model: string;
   request: string;
   media: MediaInfo;
   currentVersionId: string;
@@ -91,12 +91,12 @@ export async function runLunaAgent(options: {
   let auditedSinceMutation = true;
 
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
-    options.onStage?.(round === 0 ? "Luna is planning the edit" : "Luna is reviewing tool results");
+    options.onStage?.(round === 0 ? "planning the edit" : "reviewing tool results");
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: MAIN_MODEL,
+        model: options.model,
         reasoning: { effort: "medium" },
         store: false,
         include: ["reasoning.encrypted_content"],
@@ -104,7 +104,7 @@ export async function runLunaAgent(options: {
         max_output_tokens: 16_000,
         parallel_tool_calls: false,
         tool_choice: "auto",
-        instructions: agentInstructions(runId),
+        instructions: agentInstructions(runId, options.model),
         input,
         tools: options.tools.map((tool) => ({
           type: "function",
@@ -119,7 +119,7 @@ export async function runLunaAgent(options: {
     const payload = await response.json().catch(() => ({})) as ResponsePayload;
     if (!response.ok) throw new Error(`OpenAI agent request failed: ${payload.error?.message ?? `HTTP ${response.status}`}`);
     if (payload.usage) {
-      const usage = calculateLunaUsage(payload.usage);
+      const usage = calculateLunaUsage(payload.usage, options.model);
       costUsd += usage.costUsd;
       await options.onUsage?.(usage);
     }
@@ -133,24 +133,24 @@ export async function runLunaAgent(options: {
         continue;
       }
       const message = responseText(payload);
-      if (!message) throw new Error("Luna finished without an edit summary or response.");
-      return { message, model: MAIN_MODEL, toolCalls, mutations, costUsd };
+      if (!message) throw new Error(`${options.model} finished without an edit summary or response.`);
+      return { message, model: options.model, toolCalls, mutations, costUsd };
     }
 
     const toolOutputs: InputItem[] = [];
     for (const call of calls) {
       toolCalls += 1;
-      if (toolCalls > MAX_TOOL_CALLS) throw new Error("Luna exceeded the tool-call limit for one request.");
+      if (toolCalls > MAX_TOOL_CALLS) throw new Error(`${options.model} exceeded the tool-call limit for one request.`);
       const tool = toolMap.get(call.name);
       let result: AgentToolResult;
       if (!tool) result = { ok: false, message: `Unknown tool: ${call.name}` };
       else {
         if (tool.mutatesProject) {
           mutations += 1;
-          if (mutations > MAX_MUTATIONS) throw new Error("Luna exceeded the edit limit for one request.");
+          if (mutations > MAX_MUTATIONS) throw new Error(`${options.model} exceeded the edit limit for one request.`);
           auditedSinceMutation = false;
         }
-        options.onStage?.(`Luna · ${humanize(call.name)}`);
+        options.onStage?.(humanize(call.name));
         result = await runTool(tool, call.arguments);
         if (tool.auditsProject && result.ok) auditedSinceMutation = true;
       }
@@ -164,19 +164,20 @@ export async function runLunaAgent(options: {
     await options.onLedger?.("tool", toolOutputs);
     input.push(...toolOutputs);
   }
-  throw new Error("Luna reached the reasoning-round limit before finishing the request.");
+  throw new Error(`${options.model} reached the reasoning-round limit before finishing the request.`);
 }
 
-export function calculateLunaUsage(usage: NonNullable<ResponsePayload["usage"]>): LunaUsage {
+export function calculateLunaUsage(usage: NonNullable<ResponsePayload["usage"]>, model = "gpt-6-luna"): LunaUsage {
   const inputTokens = positive(usage.input_tokens);
   const cachedInputTokens = Math.min(inputTokens, positive(usage.input_tokens_details?.cached_tokens));
   const cacheWriteTokens = Math.min(inputTokens - cachedInputTokens, positive(usage.input_tokens_details?.cache_write_tokens));
   const ordinaryInputTokens = Math.max(0, inputTokens - cachedInputTokens - cacheWriteTokens);
   const outputTokens = positive(usage.output_tokens);
   const longContext = inputTokens > 272_000;
+  const base = modelPrices(model);
   const perMillion = longContext
-    ? { input: 0.20, cached: 0.02, cacheWrite: 0.25, output: 0.75 }
-    : { input: 0.10, cached: 0.01, cacheWrite: 0.125, output: 0.50 };
+    ? { input: base.input * 2, cached: base.cached * 2, cacheWrite: base.cacheWrite * 2, output: base.output * 1.5 }
+    : base;
   const costUsd = (
     ordinaryInputTokens * perMillion.input
     + cachedInputTokens * perMillion.cached
@@ -184,6 +185,16 @@ export function calculateLunaUsage(usage: NonNullable<ResponsePayload["usage"]>)
     + outputTokens * perMillion.output
   ) / 1_000_000;
   return { inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, costUsd };
+}
+
+function modelPrices(model: string): { input: number; cached: number; cacheWrite: number; output: number } {
+  const prices: Record<string, { input: number; output: number }> = {
+    "gpt-6-luna": { input: 0.10, output: 0.50 },
+    "gpt-6-sol": { input: 2, output: 10 },
+    "gpt-6-astra": { input: 10, output: 50 },
+  };
+  const selected = prices[model] ?? prices["gpt-6-luna"]!;
+  return { input: selected.input, cached: selected.input * 0.1, cacheWrite: selected.input * 1.25, output: selected.output };
 }
 
 function positive(value: number | undefined): number {
@@ -227,9 +238,9 @@ function editorState(options: {
   ].join("\n");
 }
 
-function agentInstructions(runId: string): string {
+function agentInstructions(runId: string, model: string): string {
   return [
-    "You are Luna, the main DumbEditor video-editing agent.",
+    `You are ${model}, the main DumbEditor video-editing agent.`,
     "Use the supplied tools to complete the user's request; you may call several tools in sequence.",
     "Inspect available state, generated assets, and tool results before claiming that work is complete.",
     "Prefer deterministic local editing tools. Generate paid assets only when the request actually needs them.",
@@ -237,6 +248,7 @@ function agentInstructions(runId: string): string {
     "When no specialized edit tool fits, inspect the available general workspace and rendering tools and devise a method before saying the edit is unavailable.",
     "After every rendered mutation, inspect frames from the current output around the changed ranges before you finish. The harness enforces a final visual audit.",
     "You may delegate unusually complex scripting or media-pipeline work to the optional Claude coding harness. In ask mode, model switches and sensitive tools pause for user approval; in auto mode the configured policy decides.",
+    "When several reasonable creative directions would benefit from a user decision, call present_choices instead of printing a list. Continue using the selected or custom answer returned by that tool.",
     "If a tool fails, correct the arguments or explain the exact blocker. Never invent a successful edit.",
     "Keep the final response short and say which version and assets were created.",
     `Agent run: ${runId}`,

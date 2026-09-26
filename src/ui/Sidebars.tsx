@@ -21,7 +21,7 @@ export function ProjectSidebar(props: {
       <Text bold color="cyan">Session</Text>
       <Text wrap="truncate-end">{props.model}</Text>
       <Text dimColor>Permissions: {props.permissionMode}</Text>
-      <Text color="yellow">Luna {formatUsd(props.usage.lunaUsd)}</Text>
+      <Text color="yellow" wrap="truncate-end">{props.model} {formatUsd(props.usage.lunaUsd)}</Text>
       {props.usage.harnessUsd > 0 && <Text color="yellow">Harness {formatUsd(props.usage.harnessUsd)}</Text>}
       <Text dimColor>Total {formatUsd(props.usage.totalUsd)}</Text>
       <Text> </Text>

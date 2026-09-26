@@ -27,6 +27,7 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
   topRow?: number;
   leftColumn?: number;
   timelineColumns?: number;
+  repaintKey?: number;
   selection: Selection;
   onTime: (time: number, force: boolean) => void;
   onEnd: () => void;
@@ -182,6 +183,15 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
     }, 0);
     return () => clearTimeout(timer);
   });
+
+  // Windows Terminal can discard Sixel graphics when a tab regains focus.
+  // Focus reporting in App increments this key so the retained frame is restored
+  // without extracting it again or repainting the React layout.
+  useEffect(() => {
+    if (!lastFrame.current) return;
+    drawEncoded(lastFrame.current);
+    drawTimeline(stdout, timelineRef.current, lastTime.current);
+  }, [props.repaintKey]);
 
   return (
     <Box width={props.columns} height={props.rows} minHeight={props.rows} flexShrink={0} justifyContent="center" alignItems="center">

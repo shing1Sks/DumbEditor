@@ -146,8 +146,8 @@ export class ProjectStore {
     return output;
   }
 
-  async addChat(role: ChatMessage["role"], content: string): Promise<void> {
-    const message: ChatMessage = { role, content, at: new Date().toISOString() };
+  async addChat(role: ChatMessage["role"], content: string, label?: string): Promise<void> {
+    const message: ChatMessage = { role, content, at: new Date().toISOString(), ...(label ? { label } : {}) };
     await appendFile(join(this.state.projectDir, CHAT_FILE), `${JSON.stringify(message)}\n`, "utf8");
   }
 

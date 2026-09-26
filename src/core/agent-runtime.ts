@@ -4,6 +4,7 @@ import type { DirectEdit, MediaInfo, Selection } from "../types.js";
 import { executeAdvancedEdit, type AdvancedEdit, type TextPosition, type VisualEffect } from "./advanced-editor.js";
 import { AgentWorkspace } from "./agent-workspace.js";
 import type { RequestApproval } from "./approval.js";
+import type { RequestChoice } from "./choice.js";
 import { generateAsset } from "./asset-generation.js";
 import { runClaudeHarness } from "./claude-harness.js";
 import { executeCustomRender } from "./custom-render.js";
@@ -33,6 +34,7 @@ export async function runEditorAgent(options: {
   onStage?: (stage: string) => void;
   onCost?: (kind: "luna" | "asset" | "harness", costUsd: number) => void;
   requestApproval?: RequestApproval;
+  requestChoice?: RequestChoice;
 }): Promise<EditorAgentResult> {
   const workspace = new AgentWorkspace(options.store.createAgentWorkspace());
   await workspace.initialize();
@@ -43,6 +45,7 @@ export async function runEditorAgent(options: {
   const tools = createEditorAgentTools({ ...options, workspace, permissionMode: settings.agent.permissionMode,
     claudeModel: settings.agent.claudeModel, claudeMaxBudgetUsd: settings.agent.claudeMaxBudgetUsd, models: settings.models });
   const result = await runLunaAgent({
+    model: settings.models.openai.text,
     request: options.request,
     media: options.media,
     currentVersionId: options.store.current.id,
@@ -57,7 +60,7 @@ export async function runEditorAgent(options: {
       await options.store.appendUsage({
         kind: "luna",
         provider: "openai",
-        model: "gpt-6-luna",
+        model: settings.models.openai.text,
         label: options.request.slice(0, 160),
         costUsd: usage.costUsd,
         estimated: false,
@@ -84,6 +87,7 @@ function createEditorAgentTools(context: {
   onStage?: (stage: string) => void;
   onCost?: (kind: "luna" | "asset" | "harness", costUsd: number) => void;
   requestApproval?: RequestApproval;
+  requestChoice?: RequestChoice;
   permissionMode: AgentPermissionMode;
   claudeModel: string;
   claudeMaxBudgetUsd: number;
@@ -99,6 +103,27 @@ function createEditorAgentTools(context: {
   });
 
   return [
+    {
+      name: "present_choices",
+      description: "Open a native DumbEditor choice picker when the user should choose between several creative directions. The picker also has a custom answer field. Use it instead of printing a list of options when the answer should guide the current request.",
+      parameters: objectSchema({
+        question: stringSchema(1, 500),
+        options: { type: "array", minItems: 2, maxItems: 6, items: stringSchema(1, 160) },
+        allow_custom: { type: "boolean" },
+      }),
+      run: async (args) => {
+        if (!Array.isArray(args.options) || !args.options.every((option) => typeof option === "string")) throw new Error("options must be an array of text choices.");
+        if (!context.requestChoice) return { ok: false, message: "Interactive choices are unavailable in this client." };
+        const answer = await context.requestChoice({
+          question: string(args.question, "question"),
+          options: args.options.map((option) => option.trim()),
+          allowCustom: args.allow_custom === true,
+        });
+        return answer === null
+          ? { ok: false, message: "The user cancelled the choice picker." }
+          : { ok: true, message: `The user chose: ${answer}`, data: { answer } };
+      },
+    },
     direct("remove_ranges", "Remove one or more time ranges from the active video.", objectSchema({
       ranges: { type: "array", minItems: 1, maxItems: 20, items: rangeSchema() },
     }), (args) => ({ action: "remove", ranges: ranges(args.ranges) })),
@@ -235,7 +260,7 @@ function createEditorAgentTools(context: {
           const approved = context.permissionMode === "auto" || await context.requestApproval?.({
             category: "model-switch",
             title: `Use a custom ${kind} model for this request`,
-            description: "Luna wants to override the configured provider, model, or generation parameters for this one asset.",
+            description: "The editor agent wants to override the configured provider, model, or generation parameters for this one asset.",
             provider: provider ?? defaults.provider,
             model: model ?? defaults.model,
             ...(providerOptions ? { parameters: providerOptions } : {}),
@@ -568,8 +593,8 @@ async function transcriptionOverrides(
     category: "model-switch",
     title: "Use a custom transcription model for this request",
     description: selected.includes("diarize")
-      ? "Luna requested speaker diarization. DumbEditor will preserve speaker labels and segment timing in the subtitle asset."
-      : "Luna wants to override the configured transcription model or endpoint parameters for this request.",
+      ? "The editor agent requested speaker diarization. DumbEditor will preserve speaker labels and segment timing in the subtitle asset."
+      : "The editor agent wants to override the configured transcription model or endpoint parameters for this request.",
     provider: "openai",
     model: selected,
     ...(providerOptions ? { parameters: providerOptions } : {}),
