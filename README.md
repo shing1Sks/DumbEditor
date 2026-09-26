@@ -26,6 +26,14 @@ DumbEditor follows four rules:
 
 The goal is capable software with a small surface: one terminal, one conversation, direct controls, and an agent that can inspect its output.
 
+## DumbEditor in action
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/shing1Sks/DumbEditor/master/docs/images/dumbeditor-agent-transcription.png" alt="DumbEditor running an agent-driven subtitle transcription inside the terminal" width="100%">
+</p>
+
+<p align="center"><em>The editor agent transcribes speech while the video, timeline, version history, assets, cost, and progress stay visible.</em></p>
+
 ## Install
 
 ### Run without installing
