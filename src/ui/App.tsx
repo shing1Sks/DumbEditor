@@ -4,6 +4,7 @@ import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { ChildProcess } from "node:child_process";
 import type { ChatMessage, DirectEdit, MediaInfo, Selection } from "../types.js";
 import { AgentWorkspace, type AgentAsset } from "../core/agent-workspace.js";
+import type { ApprovalRequest, RequestApproval } from "../core/approval.js";
 import { runEditorAgent } from "../core/agent-runtime.js";
 import { commandSuggestions, parseEditCommand } from "../core/commands.js";
 import { providerKeyStatus } from "../core/config.js";
@@ -15,10 +16,11 @@ import { clearMusicSelection, MusicPreviewController, readMusicSelection, select
 import { listProviderModels } from "../core/models.js";
 import { ProjectStore } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
-import { DEFAULT_SETTINGS, OPENAI_SLOTS, OPENROUTER_SLOTS, readSettings, setDefaultModel, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
+import { DEFAULT_SETTINGS, OPENAI_SLOTS, OPENROUTER_SLOTS, readSettings, setAgentPermissionMode, setClaudeHarnessModel, setDefaultModel, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
 import { formatTime } from "../core/time.js";
 import { EMPTY_USAGE_SUMMARY, formatUsd, type UsageSummary } from "../core/usage.js";
 import { AssetPanel } from "./AssetPanel.js";
+import { ApprovalPanel } from "./ApprovalPanel.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { editorLayout } from "./layout.js";
@@ -29,7 +31,7 @@ import { AssetsSidebar, ProjectSidebar } from "./Sidebars.js";
 import { Timeline } from "./Timeline.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
-type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | null;
+type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | "approval" | null;
 interface LoaderState { source: "Luna" | "Command" | "Editor" | "Sandbox"; stage: string }
 const LOADER_MARK = "◐";
 
@@ -55,6 +57,9 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [usage, setUsage] = useState<UsageSummary>(EMPTY_USAGE_SUMMARY);
   const [assetIndex, setAssetIndex] = useState(0);
   const [assetPlaying, setAssetPlaying] = useState(false);
+  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const [approvalAllow, setApprovalAllow] = useState(false);
+  const approvalResolver = useRef<((allowed: boolean) => void) | null>(null);
   const assetPreview = useRef<ChildProcess | null>(null);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
@@ -130,6 +135,21 @@ export function App({ initialPath }: { initialPath?: string }) {
     setAssetIndex(Math.max(0, assets.length - 1));
     setOverlay("assets");
   }, [assets.length, stopAssetPlayback]);
+  const requestApproval = useCallback<RequestApproval>((request) => new Promise<boolean>((resolve) => {
+    approvalResolver.current?.(false);
+    approvalResolver.current = resolve;
+    setApproval(request);
+    setApprovalAllow(false);
+    setOverlay("approval");
+  }), []);
+  const resolveApproval = useCallback((allowed: boolean) => {
+    const resolve = approvalResolver.current;
+    approvalResolver.current = null;
+    setApproval(null);
+    setApprovalAllow(false);
+    setOverlay(null);
+    resolve?.(allowed);
+  }, []);
 
   const refreshProjectData = useCallback(async (store: ProjectStore) => {
     const workspace = new AgentWorkspace(store.createAgentWorkspace());
@@ -309,6 +329,21 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/open") { if (!argument) { await answer("Usage: /open <VIDEO PATH>"); return; } await openVideo(argument); return; }
     if (command === "/model") { openModelPicker(); return; }
     if (command === "/bg-music") { await openMusicBrowser(argument); return; }
+    if (command === "/permissions") {
+      if (!argument) { await answer(`Agent permission mode: ${settings.agent.permissionMode}. Use /permissions ask or /permissions auto.`); return; }
+      if (argument !== "ask" && argument !== "auto") { await answer("Usage: /permissions [ask|auto]"); return; }
+      const next = await setAgentPermissionMode(argument);
+      setSettings(next);
+      await answer(`Agent permission mode set to ${argument}.`);
+      return;
+    }
+    if (command === "/harness-model") {
+      if (!argument) { await answer(`Claude harness model: ${settings.agent.claudeModel}`); return; }
+      const next = await setClaudeHarnessModel(argument);
+      setSettings(next);
+      await answer(`Claude harness model set to ${next.agent.claudeModel}.`);
+      return;
+    }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
     if (command === "/assets") {
       if (argument) { await answer("Usage: /assets"); return; }
@@ -343,7 +378,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/revert") { if (!argument) { await answer("Usage: /revert <VERSION>"); return; } await changeVersion(argument); return; }
     if (command === "/export") { openExportPanel(argument); return; }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openVideo, project, selection]);
+  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openVideo, project, selection, settings.agent.claudeModel, settings.agent.permissionMode]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -363,10 +398,12 @@ export function App({ initialPath }: { initialPath?: string }) {
       const before = project.current.id;
       const result = await runEditorAgent({
         request, store: project, media, currentTime: currentTimeRef.current, selection,
+        requestApproval,
         onCost: (kind, costUsd) => setUsage((current) => ({
           totalUsd: current.totalUsd + costUsd,
           lunaUsd: current.lunaUsd + (kind === "luna" ? costUsd : 0),
           assetUsd: current.assetUsd + (kind === "asset" ? costUsd : 0),
+          harnessUsd: current.harnessUsd + (kind === "harness" ? costUsd : 0),
           entries: current.entries + 1,
         })),
         onStage: (stage) => setLoader(stage.startsWith("SANDBOX · ")
@@ -381,10 +418,16 @@ export function App({ initialPath }: { initialPath?: string }) {
       await answer(result.message); setStatus(`${result.model} · ${result.toolCalls} tools`);
     } catch (error) { await answer(errorMessage(error)); setStatus("Luna request failed"); }
     finally { setLoader(null); }
-  }, [addUiMessage, answer, busy, handleCommand, input, media, movePlayhead, project, refreshProjectData, selection, suggestionIndex, suggestions]);
+  }, [addUiMessage, answer, busy, handleCommand, input, media, movePlayhead, project, refreshProjectData, requestApproval, selection, suggestionIndex, suggestions]);
 
   useInput((character, key) => {
     if (key.ctrl && character === "c") { exit(); return; }
+    if (overlay === "approval") {
+      if (key.escape) { resolveApproval(false); return; }
+      if (key.leftArrow || key.rightArrow || key.tab) { setApprovalAllow((value) => !value); return; }
+      if (key.return) { resolveApproval(approvalAllow); return; }
+      return;
+    }
     if (overlay === "assets") {
       if (key.escape || (key.shift && character.toLowerCase() === "a")) { closeAssetBrowser(); return; }
       if (key.upArrow || key.downArrow) {
@@ -594,9 +637,11 @@ export function App({ initialPath }: { initialPath?: string }) {
           : overlay === "assets" ? <AssetPanel assets={assets} selectedIndex={assetIndex} playing={assetPlaying}
               onPlaybackEnd={stopAssetPlayback}
               width={terminal.columns - 2} height={layout.playerRows} />
+          : overlay === "approval" && approval ? <ApprovalPanel request={approval} allowSelected={approvalAllow}
+              width={terminal.columns - 2} height={layout.playerRows} />
           : <>
             {layout.leftSidebarColumns > 0 && <ProjectSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""}
-              model={settings.models.openai.text} usage={usage} versionLimit={project?.versionLimit ?? 5}
+              model={settings.models.openai.text} permissionMode={settings.agent.permissionMode} usage={usage} versionLimit={project?.versionLimit ?? 5}
               width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
               columns={layout.videoColumns} rows={layout.playerRows} topRow={2} leftColumn={2 + layout.leftSidebarColumns}
@@ -626,11 +671,12 @@ export function App({ initialPath }: { initialPath?: string }) {
             : overlay === "music" ? <Text color="cyan">Music browser active · search, preview, and select in the popup</Text>
               : overlay === "export" ? <Text color="cyan">Export popup active · choose format and compression</Text>
                 : overlay === "assets" ? <Text color="cyan">Asset browser active · browse, preview, or type to return to chat</Text>
+                  : overlay === "approval" ? <Text color="yellow">Approval required · review the request above</Text>
             : <><Text color="cyan">› </Text><Text>{input.slice(0, inputCursor)}</Text><Text inverse>{input[inputCursor] ?? " "}</Text><Text>{input.slice(inputCursor + (inputCursor < input.length ? 1 : 0))}</Text></>}
       </Box>
       <Text dimColor>{loader
-        ? `${loader.source} is working · Luna ${formatUsd(usage.lunaUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)}`
-        : `${status} · Luna ${formatUsd(usage.lunaUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · Enter to send · Ctrl+C to quit`}</Text>
+        ? `${loader.source} is working · Luna ${formatUsd(usage.lunaUsd)} · Harness ${formatUsd(usage.harnessUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)}`
+        : `${status} · Luna ${formatUsd(usage.lunaUsd)} · Harness ${formatUsd(usage.harnessUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · Enter to send · Ctrl+C to quit`}</Text>
     </Box>
   );
 }

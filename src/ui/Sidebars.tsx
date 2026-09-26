@@ -8,18 +8,21 @@ export function ProjectSidebar(props: {
   versions: VersionEntry[];
   currentId: string;
   model: string;
+  permissionMode: "ask" | "auto";
   usage: UsageSummary;
   versionLimit: number;
   width: number;
   height: number;
 }) {
-  const room = Math.max(1, props.height - 9);
+  const room = Math.max(1, props.height - 10);
   const visible = props.versions.slice(0, room);
   return (
     <Box width={props.width} height={props.height} flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
       <Text bold color="cyan">Session</Text>
       <Text wrap="truncate-end">{props.model}</Text>
+      <Text dimColor>Permissions: {props.permissionMode}</Text>
       <Text color="yellow">Luna {formatUsd(props.usage.lunaUsd)}</Text>
+      {props.usage.harnessUsd > 0 && <Text color="yellow">Harness {formatUsd(props.usage.harnessUsd)}</Text>}
       <Text dimColor>Total {formatUsd(props.usage.totalUsd)}</Text>
       <Text> </Text>
       <Text bold color="magenta">Versions</Text>

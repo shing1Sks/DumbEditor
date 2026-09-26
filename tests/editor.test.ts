@@ -75,7 +75,7 @@ test("edits a video, records a version, and reverts without deleting history", {
     await store.appendUsage({ kind: "luna", provider: "openai", model: "gpt-6-luna", label: "edit", costUsd: 0.002, estimated: false });
     await store.appendUsage({ kind: "asset", provider: "openrouter", model: "image/model", label: "badge", costUsd: 0.01, estimated: true, assetId: "asset_test" });
     const reopened = await ProjectStore.open(source);
-    assert.deepEqual(await reopened.usageSummary(), { totalUsd: 0.012, lunaUsd: 0.002, assetUsd: 0.01, entries: 2 });
+    assert.deepEqual(await reopened.usageSummary(), { totalUsd: 0.012, lunaUsd: 0.002, assetUsd: 0.01, harnessUsd: 0, entries: 2 });
 
     const projectDirectory = store.snapshot.projectDir;
     await store.addChat("user", "temporary project conversation");

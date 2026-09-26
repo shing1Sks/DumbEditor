@@ -14,6 +14,7 @@ export interface AgentTool {
   description: string;
   parameters: Record<string, unknown>;
   mutatesProject?: boolean;
+  auditsProject?: boolean;
   run: (argumentsValue: Record<string, unknown>) => Promise<AgentToolResult>;
 }
 
@@ -87,6 +88,7 @@ export async function runLunaAgent(options: {
   let toolCalls = 0;
   let mutations = 0;
   let costUsd = 0;
+  let auditedSinceMutation = true;
 
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
     options.onStage?.(round === 0 ? "Luna is planning the edit" : "Luna is reviewing tool results");
@@ -126,6 +128,10 @@ export async function runLunaAgent(options: {
     input.push(...output as InputItem[]);
     const calls = output.filter(isFunctionCall);
     if (calls.length === 0) {
+      if (mutations > 0 && !auditedSinceMutation) {
+        input.push({ role: "developer", content: [{ type: "input_text", text: "Before finishing, visually audit the current rendered version with inspect_video_frames. Sample the edited ranges and enough surrounding frames to catch timing, layout, or rendering mistakes. If the audit finds a problem, correct it and audit again." }] });
+        continue;
+      }
       const message = responseText(payload);
       if (!message) throw new Error("Luna finished without an edit summary or response.");
       return { message, model: MAIN_MODEL, toolCalls, mutations, costUsd };
@@ -142,9 +148,11 @@ export async function runLunaAgent(options: {
         if (tool.mutatesProject) {
           mutations += 1;
           if (mutations > MAX_MUTATIONS) throw new Error("Luna exceeded the edit limit for one request.");
+          auditedSinceMutation = false;
         }
         options.onStage?.(`Luna · ${humanize(call.name)}`);
         result = await runTool(tool, call.arguments);
+        if (tool.auditsProject && result.ok) auditedSinceMutation = true;
       }
       toolOutputs.push({
         type: "function_call_output",
@@ -227,6 +235,8 @@ function agentInstructions(runId: string): string {
     "Prefer deterministic local editing tools. Generate paid assets only when the request actually needs them.",
     "When the user asks to add or generate subtitles and the video has audio, call transcribe_and_add_subtitles; do not ask them to provide a transcript first.",
     "When no specialized edit tool fits, inspect the available general workspace and rendering tools and devise a method before saying the edit is unavailable.",
+    "After every rendered mutation, inspect frames from the current output around the changed ranges before you finish. The harness enforces a final visual audit.",
+    "You may delegate unusually complex scripting or media-pipeline work to the optional Claude coding harness. In ask mode, model switches and sensitive tools pause for user approval; in auto mode the configured policy decides.",
     "If a tool fails, correct the arguments or explain the exact blocker. Never invent a successful edit.",
     "Keep the final response short and say which version and assets were created.",
     `Agent run: ${runId}`,

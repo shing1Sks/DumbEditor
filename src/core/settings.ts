@@ -8,10 +8,16 @@ export const OPENAI_SLOTS = ["text", "transcription", "speech"] as const;
 export type OpenAISlot = typeof OPENAI_SLOTS[number];
 export type ModelSlot = OpenRouterSlot | OpenAISlot;
 export type ModelProvider = "openai" | "openrouter";
+export type AgentPermissionMode = "ask" | "auto";
 
 export interface DumbEditorSettings {
   schemaVersion: 1;
   welcomeShown: boolean;
+  agent: {
+    permissionMode: AgentPermissionMode;
+    claudeModel: string;
+    claudeMaxBudgetUsd: number;
+  };
   models: {
     openai: Record<OpenAISlot, string>;
     openrouter: Record<OpenRouterSlot, string>;
@@ -21,6 +27,11 @@ export interface DumbEditorSettings {
 export const DEFAULT_SETTINGS: DumbEditorSettings = {
   schemaVersion: 1,
   welcomeShown: false,
+  agent: {
+    permissionMode: "ask",
+    claudeModel: "claude-sonnet-4-6",
+    claudeMaxBudgetUsd: 0.5,
+  },
   models: {
     openai: {
       text: "gpt-6-luna",
@@ -71,6 +82,22 @@ export async function setDefaultModel(provider: ModelProvider, slot: ModelSlot, 
   return settings;
 }
 
+export async function setAgentPermissionMode(permissionMode: AgentPermissionMode): Promise<DumbEditorSettings> {
+  const settings = await readSettings();
+  settings.agent.permissionMode = permissionMode;
+  await writeSettings(settings);
+  return settings;
+}
+
+export async function setClaudeHarnessModel(model: string): Promise<DumbEditorSettings> {
+  const value = cleanModel(model, "");
+  if (!value) throw new Error("Claude model IDs cannot be empty or contain spaces.");
+  const settings = await readSettings();
+  settings.agent.claudeModel = value;
+  await writeSettings(settings);
+  return settings;
+}
+
 /** Returns true only for the first no-argument launch. */
 export async function markWelcomeShown(): Promise<boolean> {
   const settings = await readSettings();
@@ -85,6 +112,11 @@ function normalizeSettings(raw: Partial<DumbEditorSettings>): DumbEditorSettings
   return {
     schemaVersion: 1,
     welcomeShown: raw.welcomeShown === true,
+    agent: {
+      permissionMode: raw.agent?.permissionMode === "auto" ? "auto" : "ask",
+      claudeModel: cleanModel(raw.agent?.claudeModel, DEFAULT_SETTINGS.agent.claudeModel),
+      claudeMaxBudgetUsd: finiteBudget(raw.agent?.claudeMaxBudgetUsd, DEFAULT_SETTINGS.agent.claudeMaxBudgetUsd),
+    },
     models: {
       openai: {
         text: cleanModel(raw.models?.openai?.text, DEFAULT_SETTINGS.models.openai.text),
@@ -100,6 +132,10 @@ function normalizeSettings(raw: Partial<DumbEditorSettings>): DumbEditorSettings
       },
     },
   };
+}
+
+function finiteBudget(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 20 ? value : fallback;
 }
 
 function cleanModel(value: unknown, fallback: string): string {

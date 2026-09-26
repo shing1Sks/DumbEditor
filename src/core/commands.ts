@@ -21,6 +21,8 @@ export const COMMANDS: CommandDefinition[] = [
   { name: "/export", usage: "/export [OUTPUT PATH]", description: "Open format and compression popup" },
   { name: "/bg-music", usage: "/bg-music [QUERY]", description: "Browse open-license background music" },
   { name: "/assets", usage: "/assets", description: "Browse generated and project assets" },
+  { name: "/permissions", usage: "/permissions [ask|auto]", description: "Show or set agent approval mode" },
+  { name: "/harness-model", usage: "/harness-model [MODEL]", description: "Show or set the Claude coding harness model" },
   { name: "/model", usage: "/model", description: "Open the provider and model picker" },
   { name: "/status", usage: "/status", description: "Show project details" },
   { name: "/play", usage: "/play", description: "Play the preview" },

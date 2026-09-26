@@ -3,7 +3,9 @@ import { join } from "node:path";
 import type { DirectEdit, MediaInfo, Selection } from "../types.js";
 import { executeAdvancedEdit, type AdvancedEdit, type TextPosition, type VisualEffect } from "./advanced-editor.js";
 import { AgentWorkspace } from "./agent-workspace.js";
+import type { RequestApproval } from "./approval.js";
 import { generateAsset } from "./asset-generation.js";
+import { runClaudeHarness } from "./claude-harness.js";
 import { executeCustomRender } from "./custom-render.js";
 import { executeDirectEdit } from "./editor.js";
 import { runLunaAgent, type AgentTool, type LunaAgentResult } from "./luna-agent.js";
@@ -14,6 +16,7 @@ import { runProcess } from "./process.js";
 import { ProjectStore } from "./project.js";
 import { localSandboxStatus, runSandboxScript } from "./sandbox.js";
 import { transcribeVideoToSrt } from "./transcription.js";
+import { readSettings, type AgentPermissionMode, type DumbEditorSettings } from "./settings.js";
 
 export interface EditorAgentResult extends LunaAgentResult {
   media: MediaInfo;
@@ -28,14 +31,17 @@ export async function runEditorAgent(options: {
   selection: Selection;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
-  onCost?: (kind: "luna" | "asset", costUsd: number) => void;
+  onCost?: (kind: "luna" | "asset" | "harness", costUsd: number) => void;
+  requestApproval?: RequestApproval;
 }): Promise<EditorAgentResult> {
   const workspace = new AgentWorkspace(options.store.createAgentWorkspace());
   await workspace.initialize();
   const history = await options.store.chatHistory();
+  const settings = await readSettings();
   const last = history.at(-1);
   if (last?.role === "user" && last.content === options.request) history.pop();
-  const tools = createEditorAgentTools({ ...options, workspace });
+  const tools = createEditorAgentTools({ ...options, workspace, permissionMode: settings.agent.permissionMode,
+    claudeModel: settings.agent.claudeModel, claudeMaxBudgetUsd: settings.agent.claudeMaxBudgetUsd, models: settings.models });
   const result = await runLunaAgent({
     request: options.request,
     media: options.media,
@@ -76,7 +82,12 @@ function createEditorAgentTools(context: {
   workspace: AgentWorkspace;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
-  onCost?: (kind: "luna" | "asset", costUsd: number) => void;
+  onCost?: (kind: "luna" | "asset" | "harness", costUsd: number) => void;
+  requestApproval?: RequestApproval;
+  permissionMode: AgentPermissionMode;
+  claudeModel: string;
+  claudeMaxBudgetUsd: number;
+  models: DumbEditorSettings["models"];
 }): AgentTool[] {
   const direct = (name: string, description: string, parameters: Record<string, unknown>, make: (args: Record<string, unknown>) => DirectEdit): AgentTool => ({
     name, description, parameters, mutatesProject: true,
@@ -120,14 +131,18 @@ function createEditorAgentTools(context: {
       parameters: objectSchema({
         language: { type: ["string", "null"], maxLength: 40 },
         context: { type: ["string", "null"], maxLength: 1000 },
+        model: { type: ["string", "null"], maxLength: 200 },
+        provider_options_json: { type: ["string", "null"], maxLength: 10_000 },
       }),
       mutatesProject: true,
       run: async (args) => {
+        const overrides = await transcriptionOverrides(context, args);
         const transcription = await transcribeVideoToSrt({
           filePath: context.store.current.filePath,
           workspace: context.workspace,
           ...(typeof args.language === "string" ? { language: args.language } : {}),
           ...(typeof args.context === "string" ? { context: args.context } : {}),
+          ...overrides,
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.onStage ? { onStage: context.onStage } : {}),
         });
@@ -159,13 +174,17 @@ function createEditorAgentTools(context: {
       parameters: objectSchema({
         language: { type: ["string", "null"], maxLength: 40 },
         context: { type: ["string", "null"], maxLength: 1000 },
+        model: { type: ["string", "null"], maxLength: 200 },
+        provider_options_json: { type: ["string", "null"], maxLength: 10_000 },
       }),
       run: async (args) => {
+        const overrides = await transcriptionOverrides(context, args);
         const result = await transcribeVideoToSrt({
           filePath: context.store.current.filePath,
           workspace: context.workspace,
           ...(typeof args.language === "string" ? { language: args.language } : {}),
           ...(typeof args.context === "string" ? { context: args.context } : {}),
+          ...overrides,
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.onStage ? { onStage: context.onStage } : {}),
         });
@@ -198,20 +217,88 @@ function createEditorAgentTools(context: {
     }), async (args) => ({ action: "background-music", filePath: await musicPath(context.workspace, string(args.source, "source"), args.reference),
       volume: number(args.volume, "volume"), loop: Boolean(args.loop), startAt: number(args.start_at, "start_at") })),
     {
-      name: "generate_asset", description: "Generate an image, speech audio, music clip, or video asset using the configured provider model.",
+      name: "generate_asset", description: "Generate an image, speech audio, music clip, or video asset. Normally use the configured default. You may request another provider/model and endpoint parameters when the task needs them; ask mode pauses for user approval before that switch.",
       parameters: objectSchema({ kind: { type: "string", enum: ["image", "audio", "music", "video"] }, prompt: stringSchema(1, 8000),
-        duration: { type: ["number", "null"], minimum: 1, maximum: 15 }, voice: { type: ["string", "null"], maxLength: 80 } }),
+        duration: { type: ["number", "null"], minimum: 1, maximum: 15 }, voice: { type: ["string", "null"], maxLength: 80 },
+        provider: { type: ["string", "null"], enum: ["openai", "openrouter", null] },
+        model: { type: ["string", "null"], maxLength: 200 },
+        provider_options_json: { type: ["string", "null"], maxLength: 10_000 },
+      }),
       run: async (args) => {
+        const kind = args.kind as "image" | "audio" | "music" | "video";
+        const provider = args.provider === "openai" || args.provider === "openrouter" ? args.provider : undefined;
+        const model = typeof args.model === "string" ? args.model : undefined;
+        const providerOptions = typeof args.provider_options_json === "string" ? jsonObject(args.provider_options_json, "provider_options_json") : undefined;
+        const defaults = defaultAssetRoute(kind, context.models);
+        const switchesDefault = Boolean(model && model !== defaults.model) || Boolean(provider && provider !== defaults.provider) || Boolean(providerOptions);
+        if (switchesDefault) {
+          const approved = context.permissionMode === "auto" || await context.requestApproval?.({
+            category: "model-switch",
+            title: `Use a custom ${kind} model for this request`,
+            description: "Luna wants to override the configured provider, model, or generation parameters for this one asset.",
+            provider: provider ?? defaults.provider,
+            model: model ?? defaults.model,
+            ...(providerOptions ? { parameters: providerOptions } : {}),
+          }) === true;
+          if (!approved) return { ok: false, message: "The user denied the model or parameter override." };
+        }
         const asset = await generateAsset(args.kind as "image" | "audio" | "music" | "video", {
           prompt: string(args.prompt, "prompt"), workspace: context.workspace,
           ...(typeof args.duration === "number" ? { duration: args.duration } : {}),
           ...(typeof args.voice === "string" ? { voice: args.voice } : {}),
+          ...(provider ? { provider } : {}),
+          ...(model ? { model } : {}),
+          ...(providerOptions ? { providerOptions } : {}),
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.onStage ? { onStage: context.onStage } : {}),
         });
         await recordAssetUsage(context.store, asset);
         if (asset.costUsd !== undefined) context.onCost?.("asset", asset.costUsd);
         return { ok: true, message: `Created ${asset.id}`, data: asset as unknown as Record<string, unknown> };
+      },
+    },
+    {
+      name: "delegate_to_claude_harness",
+      description: "Delegate an unusually complex workspace task to the optional Claude coding-agent harness. Use this for multi-file scripts, unusual media pipelines, or diagnosis that benefits from a coding agent. The harness works only in the project workspace and returns its files and summary.",
+      parameters: objectSchema({
+        task: stringSchema(1, 8_000),
+        model: { type: ["string", "null"], maxLength: 200 },
+        max_budget_usd: { type: ["number", "null"], minimum: 0.01, maximum: 20 },
+        max_turns: { type: "integer", minimum: 1, maximum: 50 },
+        effort: { type: "string", enum: ["low", "medium", "high"] },
+      }),
+      run: async (args) => {
+        const model = typeof args.model === "string" ? args.model : context.claudeModel;
+        const maxBudgetUsd = typeof args.max_budget_usd === "number" ? args.max_budget_usd : context.claudeMaxBudgetUsd;
+        const approved = context.permissionMode === "auto" || await context.requestApproval?.({
+          category: "coding-harness",
+          title: "Delegate work to the Claude coding harness",
+          description: `Claude will work inside this project's agent workspace with a maximum budget of $${maxBudgetUsd.toFixed(2)}. Tool actions that need permission will be shown separately.`,
+          provider: "Anthropic Claude Agent SDK",
+          model,
+          parameters: { maxBudgetUsd, maxTurns: args.max_turns, effort: args.effort },
+        }) === true;
+        if (!approved) return { ok: false, message: "The user denied the Claude harness delegation." };
+        const result = await runClaudeHarness({
+          task: string(args.task, "task"),
+          model,
+          maxBudgetUsd,
+          maxTurns: integer(args.max_turns, "max_turns"),
+          effort: args.effort as "low" | "medium" | "high",
+          permissionMode: context.permissionMode,
+          workspace: context.workspace,
+          activeVideoPath: context.store.current.filePath,
+          ...(context.requestApproval ? { requestApproval: context.requestApproval } : {}),
+          ...(context.signal ? { signal: context.signal } : {}),
+          ...(context.onStage ? { onStage: context.onStage } : {}),
+        });
+        await context.store.appendUsage({
+          kind: "harness", provider: "anthropic", model: result.model,
+          label: string(args.task, "task").slice(0, 160), costUsd: result.costUsd, estimated: true,
+        });
+        context.onCost?.("harness", result.costUsd);
+        return { ok: true, message: result.result, data: { model: result.model, costUsd: result.costUsd,
+          sessionId: result.sessionId, files: result.files } };
       },
     },
     {
@@ -244,6 +331,7 @@ function createEditorAgentTools(context: {
     },
     {
       name: "inspect_video_frames", description: "Extract up to eight frames and show them to the model for visual inspection.",
+      auditsProject: true,
       parameters: objectSchema({ timestamps: { type: "array", minItems: 1, maxItems: 8, items: numberSchema(0) }, detail: { type: "string", enum: ["low", "high"] } }),
       run: async (args) => inspectFrames(context.store.current.filePath, args.timestamps, args.detail, context.workspace),
     },
@@ -452,4 +540,40 @@ function integer(value: unknown, label: string): number {
 function string(value: unknown, label: string): string {
   if (typeof value !== "string") throw new Error(`${label} must be text`);
   return value;
+}
+
+function jsonObject(value: string, label: string): Record<string, unknown> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); }
+  catch { throw new Error(`${label} must contain valid JSON.`); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${label} must contain a JSON object.`);
+  return parsed as Record<string, unknown>;
+}
+
+function defaultAssetRoute(kind: "image" | "audio" | "music" | "video", models: DumbEditorSettings["models"]): { provider: "openai" | "openrouter"; model: string } {
+  if (kind === "audio") return { provider: "openai", model: models.openai.speech };
+  if (kind === "image" && !process.env.OPENROUTER_API_KEY?.trim()) return { provider: "openai", model: "gpt-image-1-mini" };
+  return { provider: "openrouter", model: models.openrouter[kind] };
+}
+
+async function transcriptionOverrides(
+  context: { models: DumbEditorSettings["models"]; permissionMode: AgentPermissionMode; requestApproval?: RequestApproval },
+  args: Record<string, unknown>,
+): Promise<{ model?: string; providerOptions?: Record<string, unknown> }> {
+  const model = typeof args.model === "string" ? args.model : undefined;
+  const providerOptions = typeof args.provider_options_json === "string" ? jsonObject(args.provider_options_json, "provider_options_json") : undefined;
+  if (!model && !providerOptions) return {};
+  const selected = model ?? context.models.openai.transcription;
+  const approved = context.permissionMode === "auto" || await context.requestApproval?.({
+    category: "model-switch",
+    title: "Use a custom transcription model for this request",
+    description: selected.includes("diarize")
+      ? "Luna requested speaker diarization. DumbEditor will preserve speaker labels and segment timing in the subtitle asset."
+      : "Luna wants to override the configured transcription model or endpoint parameters for this request.",
+    provider: "openai",
+    model: selected,
+    ...(providerOptions ? { parameters: providerOptions } : {}),
+  }) === true;
+  if (!approved) throw new Error("The user denied the transcription model or parameter override.");
+  return { ...(model ? { model } : {}), ...(providerOptions ? { providerOptions } : {}) };
 }

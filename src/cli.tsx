@@ -160,6 +160,8 @@ Editor commands:
   /model             Choose a provider, capability, and model interactively
   /bg-music [query]  Search, preview, and select open-license music
   /assets            Browse generated and project assets
+  /permissions [mode] Show or set ask/auto approval mode
+  /harness-model [id] Show or set the optional Claude harness model
   /status            Show project details
   /play              Play the preview
   /pause             Pause the preview

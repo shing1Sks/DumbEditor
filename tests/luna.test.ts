@@ -43,6 +43,10 @@ test("Luna executes a tool call and returns the reviewed final response", async 
       output: [{ type: "function_call", name: "record_edit", arguments: "{\"label\":\"done\"}", call_id: "call_1" }],
       usage: { input_tokens: 1000, input_tokens_details: { cached_tokens: 100 }, output_tokens: 200 },
     });
+    if (call === 2) return Response.json({
+      output: [{ type: "function_call", name: "audit_output", arguments: "{}", call_id: "call_2" }],
+      usage: { input_tokens: 1500, input_tokens_details: { cached_tokens: 300 }, output_tokens: 120 },
+    });
     return Response.json({
       output: [{ type: "message", content: [{ type: "output_text", text: "Created v0001." }] }],
       usage: { input_tokens: 2000, input_tokens_details: { cached_tokens: 500 }, output_tokens: 100 },
@@ -55,6 +59,13 @@ test("Luna executes a tool call and returns the reviewed final response", async 
     mutatesProject: true,
     run: async (args) => ({ ok: true, message: String(args.label) }),
   };
+  const auditTool: AgentTool = {
+    name: "audit_output",
+    description: "Audit the rendered output",
+    parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
+    auditsProject: true,
+    run: async () => ({ ok: true, message: "Output looks correct" }),
+  };
   try {
     const result = await runLunaAgent({
       request: "make an edit",
@@ -63,17 +74,18 @@ test("Luna executes a tool call and returns the reviewed final response", async 
       currentTime: 0,
       selection: { in: null, out: null },
       history: [],
-      tools: [tool],
+      tools: [tool, auditTool],
       onUsage: async (usage) => { recordedUsage.push(usage); },
     });
     assert.equal(result.message, "Created v0001.");
-    assert.equal(result.toolCalls, 1);
+    assert.equal(result.toolCalls, 2);
     assert.equal(result.mutations, 1);
-    assert.equal(recordedUsage.length, 2);
+    assert.equal(recordedUsage.length, 3);
     assert.equal(result.costUsd, recordedUsage.reduce((sum, usage) => sum + usage.costUsd, 0));
-    assert.equal(requests.length, 2);
-    const secondInput = requests[1]?.input as Array<Record<string, unknown>>;
-    assert.equal(secondInput.some((item) => item.type === "function_call_output" && item.call_id === "call_1"), true);
+    assert.equal(requests.length, 3);
+    const finalInput = requests[2]?.input as Array<Record<string, unknown>>;
+    assert.equal(finalInput.some((item) => item.type === "function_call_output" && item.call_id === "call_1"), true);
+    assert.equal(finalInput.some((item) => item.type === "function_call_output" && item.call_id === "call_2"), true);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.OPENAI_API_KEY;

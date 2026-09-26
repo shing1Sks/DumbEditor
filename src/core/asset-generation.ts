@@ -35,6 +35,9 @@ export interface GenerateAssetOptions {
   workspace: AgentWorkspace;
   duration?: number;
   voice?: string;
+  provider?: "openai" | "openrouter";
+  model?: string;
+  providerOptions?: Record<string, unknown>;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
 }
@@ -48,21 +51,26 @@ export async function generateAsset(kind: Exclude<AssetKind, "file">, options: G
 
   if (kind === "image") {
     const openrouterKey = process.env.OPENROUTER_API_KEY?.trim();
-    return openrouterKey
-      ? generateOpenRouterImage(settings.models.openrouter.image, openrouterKey, options)
-      : generateOpenAIImage(prompt, options);
+    const provider = options.provider ?? (options.model?.includes("/") ? "openrouter" : openrouterKey && !options.model ? "openrouter" : "openai");
+    if (provider === "openrouter") {
+      if (!openrouterKey) throw new Error("OpenRouter image generation needs an OpenRouter key. Run dumbeditor setup.");
+      return generateOpenRouterImage(options.model ?? settings.models.openrouter.image, openrouterKey, options);
+    }
+    return generateOpenAIImage(options.model ?? "gpt-image-1-mini", prompt, options);
   }
 
   if (kind === "audio") {
     const openAIKey = process.env.OPENAI_API_KEY?.trim();
     if (!openAIKey) throw new Error("Speech generation needs an OpenAI key. Run dumbeditor setup.");
-    return generateOpenAISpeech(settings.models.openai.speech, openAIKey, options);
+    if (options.provider === "openrouter") throw new Error("Speech generation currently uses the OpenAI speech endpoint.");
+    return generateOpenAISpeech(options.model ?? settings.models.openai.speech, openAIKey, options);
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) throw new Error(`${kind} generation needs an OpenRouter key. Run dumbeditor setup.`);
-  if (kind === "video") return generateOpenRouterVideo(settings.models.openrouter.video, apiKey, options);
-  return generateOpenRouterMusic(settings.models.openrouter.music, apiKey, options);
+  if (options.provider === "openai") throw new Error(`${kind} generation currently uses OpenRouter.`);
+  if (kind === "video") return generateOpenRouterVideo(options.model ?? settings.models.openrouter.video, apiKey, options);
+  return generateOpenRouterMusic(options.model ?? settings.models.openrouter.music, apiKey, options);
 }
 
 async function generateOpenRouterImage(model: string, apiKey: string, options: GenerateAssetOptions): Promise<AgentAsset> {
@@ -71,6 +79,7 @@ async function generateOpenRouterImage(model: string, apiKey: string, options: G
     model,
     prompt: options.prompt,
     aspect_ratio: "1:1",
+    ...providerOptions(options, ["model", "prompt"]),
   }, options.signal);
   const image = payload.data?.[0];
   if (!image) throw new Error("OpenRouter returned no generated image.");
@@ -84,16 +93,16 @@ async function generateOpenRouterImage(model: string, apiKey: string, options: G
     ...providerCost(payload.usage) });
 }
 
-async function generateOpenAIImage(prompt: string, options: GenerateAssetOptions): Promise<AgentAsset> {
+async function generateOpenAIImage(model: string, prompt: string, options: GenerateAssetOptions): Promise<AgentAsset> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("Image generation needs an OpenAI or OpenRouter key. Run dumbeditor setup.");
-  const model = "gpt-image-1-mini";
   options.onStage?.(`Generating image with ${model}`);
   const payload = await requestJson<ImageResponse>("https://api.openai.com/v1/images/generations", apiKey, {
     model,
     prompt,
     size: "1024x1024",
     quality: "low",
+    ...providerOptions(options, ["model", "prompt"]),
   }, options.signal);
   const image = payload.data?.[0];
   if (!image?.b64_json) throw new Error("OpenAI returned no generated image bytes.");
@@ -109,7 +118,8 @@ async function generateOpenAISpeech(model: string, apiKey: string, options: Gene
   const response = await fetch("https://api.openai.com/v1/audio/speech", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, input: options.prompt, voice: options.voice ?? "marin", response_format: "mp3" }),
+    body: JSON.stringify({ model, input: options.prompt, voice: options.voice ?? "marin", response_format: "mp3",
+      ...providerOptions(options, ["model", "input"]) }),
     ...(options.signal ? { signal: options.signal } : {}),
   });
   if (!response.ok) throw new Error(await responseError(response, "OpenAI speech request failed"));
@@ -129,6 +139,7 @@ async function generateOpenRouterMusic(model: string, apiKey: string, options: G
     modalities: ["text", "audio"],
     messages: [{ role: "user", content: options.prompt }],
     usage: { include: true },
+    ...providerOptions(options, ["model", "messages"]),
   }, options.signal);
   const media = findAudio(payload.choices?.[0]?.message);
   if (!media) throw new Error("The selected music model returned no audio data.");
@@ -150,6 +161,7 @@ async function generateOpenRouterVideo(model: string, apiKey: string, options: G
     resolution: "720p",
     aspect_ratio: "16:9",
     generate_audio: false,
+    ...providerOptions(options, ["model", "prompt"]),
   }, options.signal);
   const pollingUrl = openRouterUrl(job.polling_url ?? (job.id ? `/api/v1/videos/${job.id}` : ""));
   if (!pollingUrl) throw new Error("OpenRouter returned no video polling URL.");
@@ -174,6 +186,14 @@ function providerCost(usage: ProviderUsage | undefined): { costUsd?: number; cos
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? { costUsd: value, costEstimated: false }
     : {};
+}
+
+function providerOptions(options: GenerateAssetOptions, reserved: string[]): Record<string, unknown> {
+  if (!options.providerOptions) return {};
+  const entries = Object.entries(options.providerOptions);
+  if (entries.length > 30 || JSON.stringify(options.providerOptions).length > 10_000) throw new Error("Provider options are too large.");
+  const blocked = new Set(reserved);
+  return Object.fromEntries(entries.filter(([key]) => !blocked.has(key) && /^[a-z][a-z0-9_]{0,63}$/i.test(key)));
 }
 
 async function requestJson<T extends { error?: unknown }>(url: string, apiKey: string, body: object, signal?: AbortSignal): Promise<T> {

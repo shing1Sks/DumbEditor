@@ -8,6 +8,8 @@ import { readSettings } from "./settings.js";
 interface TranscriptionResponse {
   text?: string;
   language?: string;
+  segments?: Array<{ speaker?: string; start?: number; end?: number; text?: string }>;
+  usage?: { input_tokens?: number; output_tokens?: number };
   error?: { message?: string };
 }
 
@@ -28,6 +30,8 @@ export interface TranscribeVideoOptions {
   context?: string;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
+  model?: string;
+  providerOptions?: Record<string, unknown>;
 }
 
 const CHUNK_SECONDS = 30;
@@ -40,12 +44,13 @@ export async function transcribeVideoToSrt(options: TranscribeVideoOptions): Pro
   if (!media.hasAudio) throw new Error("This video has no audio stream to transcribe.");
   await options.workspace.initialize();
   const settings = await readSettings();
-  const model = settings.models.openai.transcription;
+  const model = options.model ?? settings.models.openai.transcription;
   const chunkCount = Math.max(1, Math.ceil(media.duration / CHUNK_SECONDS));
   const temporary = await mkdtemp(join(options.workspace.root, "transcribe-"));
   const cues: Cue[] = [];
   const transcriptParts: string[] = [];
   let detectedLanguage: string | undefined;
+  let costUsd = model.includes("diarize") ? 0 : media.duration * 0.0045 / 60;
 
   try {
     for (let index = 0; index < chunkCount; index += 1) {
@@ -60,11 +65,26 @@ export async function transcribeVideoToSrt(options: TranscribeVideoOptions): Pro
 
       options.onStage?.(`Transcribing speech ${index + 1}/${chunkCount} with ${model}`);
       const result = await transcribeChunk(audioPath, model, apiKey, options);
+      if (model.includes("diarize")) costUsd += diarizationCost(result.usage);
       const text = cleanTranscript(result.text ?? "");
       if (!text) continue;
       detectedLanguage ??= result.language;
-      transcriptParts.push(text);
-      cues.push(...timeCaptions(captionLines(text), start, start + duration));
+      if (model.includes("diarize") && result.segments?.length) {
+        const segments = result.segments.filter((segment) => typeof segment.text === "string" && segment.text.trim());
+        transcriptParts.push(...segments.map((segment) => `${segment.speaker ?? "Speaker"}: ${cleanTranscript(segment.text ?? "")}`));
+        cues.push(...segments.map((segment) => {
+          const segmentStart = Math.min(duration, Math.max(0, Number(segment.start) || 0));
+          const segmentEnd = Math.min(duration, Math.max(Number(segment.end) || 0.1, segmentStart + 0.1));
+          return {
+            start: start + segmentStart,
+            end: start + Math.max(segmentStart, segmentEnd),
+            text: wrapCaption(`${segment.speaker ?? "Speaker"}: ${cleanTranscript(segment.text ?? "")}`),
+          };
+        }));
+      } else {
+        transcriptParts.push(text);
+        cues.push(...timeCaptions(captionLines(text), start, start + duration));
+      }
     }
     if (cues.length === 0) throw new Error("No speech was detected in the video's audio.");
     const relativePath = `subtitles-${Date.now()}.srt`;
@@ -74,7 +94,7 @@ export async function transcribeVideoToSrt(options: TranscribeVideoOptions): Pro
       transcript: transcriptParts.join("\n\n"),
       cueCount: cues.length,
       model,
-      costUsd: media.duration * 0.0045 / 60,
+      costUsd,
       costEstimated: true,
       ...(detectedLanguage ? { language: detectedLanguage } : {}),
     };
@@ -93,10 +113,13 @@ async function transcribeChunk(
   const form = new FormData();
   form.append("file", new Blob([bytes], { type: "audio/mpeg" }), "audio.mp3");
   form.append("model", model);
-  form.append("response_format", "json");
+  const diarized = model.includes("diarize");
+  form.append("response_format", diarized ? "diarized_json" : "json");
+  if (diarized) form.append("chunking_strategy", "auto");
   if (options.language?.trim()) form.append("language", options.language.trim());
   const prompt = options.context?.trim() || "Transcribe the spoken words accurately with natural punctuation. Do not describe music or sound effects.";
-  form.append("prompt", prompt.slice(0, 1_000));
+  if (!diarized) form.append("prompt", prompt.slice(0, 1_000));
+  appendProviderOptions(form, options.providerOptions, ["file", "model", "response_format", "prompt"]);
   const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -106,6 +129,25 @@ async function transcribeChunk(
   const payload = await response.json().catch(() => ({})) as TranscriptionResponse;
   if (!response.ok) throw new Error(`OpenAI transcription failed: ${payload.error?.message ?? `HTTP ${response.status}`}`);
   return payload;
+}
+
+function diarizationCost(usage: TranscriptionResponse["usage"]): number {
+  if (!usage) return 0;
+  return ((usage.input_tokens ?? 0) * 2.5 + (usage.output_tokens ?? 0) * 10) / 1_000_000;
+}
+
+function appendProviderOptions(form: FormData, options: Record<string, unknown> | undefined, reserved: string[]): void {
+  if (!options) return;
+  if (Object.keys(options).length > 30 || JSON.stringify(options).length > 10_000) throw new Error("Transcription provider options are too large.");
+  const blocked = new Set(reserved);
+  for (const [key, value] of Object.entries(options)) {
+    if (blocked.has(key) || !/^[a-z][a-z0-9_]{0,63}$/i.test(key) || value === null || value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) form.append(`${key}[]`, typeof item === "string" ? item : JSON.stringify(item));
+    } else {
+      form.append(key, typeof value === "string" ? value : typeof value === "object" ? JSON.stringify(value) : String(value));
+    }
+  }
 }
 
 interface Cue { start: number; end: number; text: string }

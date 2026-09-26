@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-export type UsageKind = "luna" | "asset";
+export type UsageKind = "luna" | "asset" | "harness";
 
 export interface UsageEntry {
   id: string;
   at: string;
   kind: UsageKind;
-  provider: "openai" | "openrouter" | "local";
+  provider: "openai" | "openrouter" | "anthropic" | "local";
   model: string;
   label: string;
   costUsd: number;
@@ -22,10 +22,11 @@ export interface UsageSummary {
   totalUsd: number;
   lunaUsd: number;
   assetUsd: number;
+  harnessUsd: number;
   entries: number;
 }
 
-export const EMPTY_USAGE_SUMMARY: UsageSummary = { totalUsd: 0, lunaUsd: 0, assetUsd: 0, entries: 0 };
+export const EMPTY_USAGE_SUMMARY: UsageSummary = { totalUsd: 0, lunaUsd: 0, assetUsd: 0, harnessUsd: 0, entries: 0 };
 
 export function createUsageEntry(entry: Omit<UsageEntry, "id" | "at">): UsageEntry {
   return { ...entry, id: `usage_${randomUUID().slice(0, 12)}`, at: new Date().toISOString() };
@@ -34,7 +35,8 @@ export function createUsageEntry(entry: Omit<UsageEntry, "id" | "at">): UsageEnt
 export function summarizeUsage(entries: UsageEntry[]): UsageSummary {
   const lunaUsd = entries.filter((entry) => entry.kind === "luna").reduce((sum, entry) => sum + entry.costUsd, 0);
   const assetUsd = entries.filter((entry) => entry.kind === "asset").reduce((sum, entry) => sum + entry.costUsd, 0);
-  return { totalUsd: lunaUsd + assetUsd, lunaUsd, assetUsd, entries: entries.length };
+  const harnessUsd = entries.filter((entry) => entry.kind === "harness").reduce((sum, entry) => sum + entry.costUsd, 0);
+  return { totalUsd: lunaUsd + assetUsd + harnessUsd, lunaUsd, assetUsd, harnessUsd, entries: entries.length };
 }
 
 export function formatUsd(value: number, estimated = false): string {
@@ -50,8 +52,8 @@ export function isUsageEntry(value: unknown): value is UsageEntry {
   const entry = value as Partial<UsageEntry>;
   return typeof entry.id === "string"
     && typeof entry.at === "string"
-    && (entry.kind === "luna" || entry.kind === "asset")
-    && ["openai", "openrouter", "local"].includes(entry.provider ?? "")
+    && (entry.kind === "luna" || entry.kind === "asset" || entry.kind === "harness")
+    && ["openai", "openrouter", "anthropic", "local"].includes(entry.provider ?? "")
     && typeof entry.model === "string"
     && typeof entry.label === "string"
     && typeof entry.costUsd === "number"
