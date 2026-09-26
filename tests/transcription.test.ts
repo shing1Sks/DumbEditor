@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AgentWorkspace } from "../src/core/agent-workspace.js";
-import { generateAsset } from "../src/core/asset-generation.js";
+import { AssetGenerationError, generateAsset } from "../src/core/asset-generation.js";
 import { runProcess } from "../src/core/process.js";
 import { transcribeVideoToSrt } from "../src/core/transcription.js";
 
@@ -73,6 +73,67 @@ test("generates speech through the configured direct OpenAI TTS model", async ()
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalKey;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("generates music from nested audio data while keeping transport options nonstreaming", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-music-generation-"));
+  const workspace = new AgentWorkspace(join(directory, "agent"));
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.OPENROUTER_API_KEY;
+  let requestedBody: Record<string, unknown> = {};
+  try {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      requestedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({
+        choices: [{ message: { content: [{ type: "audio", audio_url: { url: "data:audio/wav;base64,AQID" } }] } }],
+        usage: { cost: 0.04 },
+      });
+    }) as typeof fetch;
+    const asset = await generateAsset("music", {
+      prompt: "A calm electronic loop without vocals",
+      workspace,
+      model: "default",
+      providerOptions: { stream: true, stream_options: { include_usage: true }, temperature: 0.8 },
+    });
+    assert.notEqual(requestedBody.model, "default");
+    assert.equal(requestedBody.stream, undefined);
+    assert.equal(requestedBody.stream_options, undefined);
+    assert.equal(requestedBody.temperature, 0.8);
+    assert.deepEqual(await readFile(asset.path), Buffer.from([1, 2, 3]));
+    assert.equal(asset.kind, "music");
+    assert.equal(asset.source, "generated");
+    assert.equal(asset.costUsd, 0.04);
+    assert.match(asset.path, /\.wav$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalKey;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("preserves provider cost when music generation returns an empty result", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-empty-music-"));
+  const workspace = new AgentWorkspace(join(directory, "agent"));
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.OPENROUTER_API_KEY;
+  try {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    globalThis.fetch = (async () => Response.json({ choices: [{ message: { content: [] } }], usage: { cost: 0.04 } })) as typeof fetch;
+    await assert.rejects(
+      generateAsset("music", { prompt: "A short ambient loop", workspace, model: "google/lyria-test" }),
+      (error: unknown) => error instanceof AssetGenerationError
+        && error.model === "google/lyria-test"
+        && error.costUsd === 0.04
+        && /empty result/.test(error.message),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalKey;
     await rm(directory, { recursive: true, force: true });
   }
 });

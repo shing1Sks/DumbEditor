@@ -96,6 +96,10 @@ test("Luna executes a tool call and returns the reviewed final response", async 
     assert.equal(result.costUsd, recordedUsage.reduce((sum, usage) => sum + usage.costUsd, 0));
     assert.equal(requests.length, 3);
     assert.equal(requests[0]?.model, "gpt-6-sol");
+    const instructions = String(requests[0]?.instructions ?? "");
+    assert.match(instructions, /Asset generation and sourcing/);
+    assert.match(instructions, /Royalty-free/);
+    assert.match(instructions, /Do not silently substitute stock media/);
     const firstInput = requests[0]?.input as Array<Record<string, unknown>>;
     const userHistory = firstInput.find((item) => item.role === "user") as { content?: Array<Record<string, unknown>> };
     const assistantHistory = firstInput.find((item) => item.role === "assistant") as { content?: Array<Record<string, unknown>> };

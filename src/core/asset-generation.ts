@@ -26,9 +26,11 @@ interface MusicResponse {
 interface ProviderUsage { cost?: number; total_cost?: number }
 
 interface MusicMessage {
-  audio?: { data?: string; url?: string; format?: string };
+  audio?: AudioMedia;
   content?: string | Array<Record<string, unknown>>;
 }
+
+interface AudioMedia { data?: string; url?: string; format?: string }
 
 export interface GenerateAssetOptions {
   prompt: string;
@@ -42,35 +44,48 @@ export interface GenerateAssetOptions {
   onStage?: (stage: string) => void;
 }
 
+export class AssetGenerationError extends Error {
+  constructor(
+    message: string,
+    readonly provider: "openai" | "openrouter",
+    readonly model: string,
+    readonly costUsd?: number,
+  ) {
+    super(message);
+    this.name = "AssetGenerationError";
+  }
+}
+
 export async function generateAsset(kind: Exclude<AssetKind, "file">, options: GenerateAssetOptions): Promise<AgentAsset> {
   const prompt = options.prompt.trim();
   if (!prompt) throw new Error("Asset prompt cannot be empty.");
   if (prompt.length > 8_000) throw new Error("Asset prompts are limited to 8,000 characters.");
   await options.workspace.initialize();
   const settings = await readSettings();
+  const requestedModel = normalizedModel(options.model);
 
   if (kind === "image") {
     const openrouterKey = process.env.OPENROUTER_API_KEY?.trim();
-    const provider = options.provider ?? (options.model?.includes("/") ? "openrouter" : openrouterKey && !options.model ? "openrouter" : "openai");
+    const provider = options.provider ?? (requestedModel?.includes("/") ? "openrouter" : openrouterKey && !requestedModel ? "openrouter" : "openai");
     if (provider === "openrouter") {
       if (!openrouterKey) throw new Error("OpenRouter image generation needs an OpenRouter key. Run dumbeditor setup.");
-      return generateOpenRouterImage(options.model ?? settings.models.openrouter.image, openrouterKey, options);
+      return generateOpenRouterImage(requestedModel ?? settings.models.openrouter.image, openrouterKey, options);
     }
-    return generateOpenAIImage(options.model ?? "gpt-image-1-mini", prompt, options);
+    return generateOpenAIImage(requestedModel ?? "gpt-image-1-mini", prompt, options);
   }
 
   if (kind === "audio") {
     const openAIKey = process.env.OPENAI_API_KEY?.trim();
     if (!openAIKey) throw new Error("Speech generation needs an OpenAI key. Run dumbeditor setup.");
     if (options.provider === "openrouter") throw new Error("Speech generation currently uses the OpenAI speech endpoint.");
-    return generateOpenAISpeech(options.model ?? settings.models.openai.speech, openAIKey, options);
+    return generateOpenAISpeech(requestedModel ?? settings.models.openai.speech, openAIKey, options);
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) throw new Error(`${kind} generation needs an OpenRouter key. Run dumbeditor setup.`);
   if (options.provider === "openai") throw new Error(`${kind} generation currently uses OpenRouter.`);
-  if (kind === "video") return generateOpenRouterVideo(options.model ?? settings.models.openrouter.video, apiKey, options);
-  return generateOpenRouterMusic(options.model ?? settings.models.openrouter.music, apiKey, options);
+  if (kind === "video") return generateOpenRouterVideo(requestedModel ?? settings.models.openrouter.video, apiKey, options);
+  return generateOpenRouterMusic(requestedModel ?? settings.models.openrouter.music, apiKey, options);
 }
 
 async function generateOpenRouterImage(model: string, apiKey: string, options: GenerateAssetOptions): Promise<AgentAsset> {
@@ -139,10 +154,15 @@ async function generateOpenRouterMusic(model: string, apiKey: string, options: G
     modalities: ["text", "audio"],
     messages: [{ role: "user", content: options.prompt }],
     usage: { include: true },
-    ...providerOptions(options, ["model", "messages"]),
+    ...providerOptions(options, ["model", "messages", "modalities", "stream", "stream_options", "usage"]),
   }, options.signal);
   const media = findAudio(payload.choices?.[0]?.message);
-  if (!media) throw new Error("The selected music model returned no audio data.");
+  if (!media) throw new AssetGenerationError(
+    `${model} returned no audio data. OpenRouter accepted the request, but the upstream music generation produced an empty result.`,
+    "openrouter",
+    model,
+    providerCost(payload.usage).costUsd,
+  );
   const extension = audioExtension(media.format);
   const path = options.workspace.assetPath("music", extension);
   if (media.data) await writeBase64(path, media.data, 180_000_000);
@@ -215,18 +235,49 @@ async function getJson<T extends { error?: string | { message?: string } }>(url:
   return payload;
 }
 
-function findAudio(message: MusicMessage | undefined): { data?: string; url?: string; format?: string } | undefined {
+function findAudio(message: MusicMessage | undefined): AudioMedia | undefined {
   if (!message) return undefined;
-  if (message.audio?.data || message.audio?.url) return message.audio;
+  const direct = audioMedia(message.audio);
+  if (direct) return direct;
+  if (typeof message.content === "string") return audioMedia(message.content);
   if (!Array.isArray(message.content)) return undefined;
   for (const part of message.content) {
-    const audio = part.audio as Record<string, unknown> | undefined;
-    const data = typeof part.data === "string" ? part.data : typeof audio?.data === "string" ? audio.data : undefined;
-    const url = typeof part.url === "string" ? part.url : typeof audio?.url === "string" ? audio.url : undefined;
-    const format = typeof part.format === "string" ? part.format : typeof audio?.format === "string" ? audio.format : undefined;
-    if (data || url) return { ...(data ? { data } : {}), ...(url ? { url } : {}), ...(format ? { format } : {}) };
+    const media = audioMedia(part.audio) ?? audioMedia(part.audio_url) ?? audioMedia(part.inline_data)
+      ?? audioMedia(part.inlineData) ?? audioMedia(part.file_data) ?? audioMedia(part);
+    if (media) return media;
   }
   return undefined;
+}
+
+function audioMedia(value: unknown): AudioMedia | undefined {
+  if (typeof value === "string") return audioString(value);
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const format = typeof record.format === "string" ? record.format
+    : typeof record.mime_type === "string" ? record.mime_type
+      : typeof record.mimeType === "string" ? record.mimeType : undefined;
+  const dataValue = typeof record.data === "string" ? record.data
+    : typeof record.b64_json === "string" ? record.b64_json : undefined;
+  const urlValue = typeof record.url === "string" ? record.url
+    : typeof record.uri === "string" ? record.uri : undefined;
+  if (dataValue) return audioString(dataValue, format) ?? { data: dataValue, ...(format ? { format } : {}) };
+  if (urlValue) return audioString(urlValue, format) ?? { url: urlValue, ...(format ? { format } : {}) };
+  return undefined;
+}
+
+function audioString(value: string, format?: string): AudioMedia | undefined {
+  if (value.startsWith("data:audio/")) {
+    const match = /^data:audio\/([^;,]+)(?:;[^,]*)?;base64,(.+)$/s.exec(value);
+    return match ? { data: match[2]!, format: match[1]! } : undefined;
+  }
+  if (/^https:\/\//i.test(value)) return { url: value, ...(format ? { format } : {}) };
+  return undefined;
+}
+
+function normalizedModel(value: string | undefined): string | undefined {
+  const model = value?.trim();
+  if (!model || ["null", "undefined", "default", "none"].includes(model.toLowerCase())) return undefined;
+  return model;
 }
 
 function apiErrorMessage(error: unknown): string | undefined {
@@ -283,8 +334,12 @@ function imageExtension(mediaType: string): string {
 }
 
 function audioExtension(format?: string): string {
-  if (format === "wav") return ".wav";
-  if (format === "pcm") return ".pcm";
+  const normalized = format?.toLowerCase() ?? "";
+  if (normalized.includes("wav")) return ".wav";
+  if (normalized.includes("pcm")) return ".pcm";
+  if (normalized.includes("ogg")) return ".ogg";
+  if (normalized.includes("flac")) return ".flac";
+  if (normalized.includes("aac")) return ".aac";
   return ".mp3";
 }
 

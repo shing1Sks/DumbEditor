@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChatMessage, MediaInfo, Selection } from "../types.js";
 import type { ModelProvider } from "./settings.js";
+import { loadAgentSkills } from "./agent-skills.js";
 
 export interface AgentToolResult {
   ok: boolean;
@@ -93,6 +94,7 @@ export async function runLunaAgent(options: {
   let auditedSinceMutation = true;
 
   let round = 0;
+  const packagedSkills = await loadAgentSkills();
   while (true) {
     options.onStage?.(round === 0 ? "planning the edit" : "reviewing tool results");
     const response = await fetch(provider === "openrouter" ? "https://openrouter.ai/api/v1/responses" : "https://api.openai.com/v1/responses", {
@@ -108,7 +110,7 @@ export async function runLunaAgent(options: {
         } : { session_id: runId }),
         parallel_tool_calls: false,
         tool_choice: "auto",
-        instructions: agentInstructions(runId, options.model),
+        instructions: agentInstructions(runId, options.model, packagedSkills),
         input,
         tools: options.tools.map((tool) => ({
           type: "function",
@@ -282,7 +284,7 @@ function editorState(options: {
   ].join("\n");
 }
 
-function agentInstructions(runId: string, model: string): string {
+function agentInstructions(runId: string, model: string, packagedSkills: string): string {
   return [
     `You are ${model}, the main DumbEditor video-editing agent.`,
     "Use the supplied tools to complete the user's request; you may call several tools in sequence.",
@@ -296,7 +298,8 @@ function agentInstructions(runId: string, model: string): string {
     "If a tool fails, correct the arguments or explain the exact blocker. Never invent a successful edit.",
     "Keep the final response short and say which version and assets were created.",
     `Agent run: ${runId}`,
-  ].join(" ");
+    packagedSkills ? `Packaged DumbEditor skills:\n${packagedSkills}` : "",
+  ].filter(Boolean).join(" ");
 }
 
 function isFunctionCall(item: FunctionCallItem | MessageItem | Record<string, unknown>): item is FunctionCallItem {

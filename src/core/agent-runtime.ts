@@ -5,7 +5,7 @@ import { executeAdvancedEdit, type AdvancedEdit, type TextPosition, type VisualE
 import { AgentWorkspace } from "./agent-workspace.js";
 import type { RequestApproval } from "./approval.js";
 import type { RequestChoice } from "./choice.js";
-import { generateAsset } from "./asset-generation.js";
+import { AssetGenerationError, generateAsset } from "./asset-generation.js";
 import { runClaudeHarness } from "./claude-harness.js";
 import { executeCustomRender } from "./custom-render.js";
 import { executeDirectEdit } from "./editor.js";
@@ -255,8 +255,9 @@ function createEditorAgentTools(context: {
       run: async (args) => {
         const kind = args.kind as "image" | "audio" | "music" | "video";
         const provider = args.provider === "openai" || args.provider === "openrouter" ? args.provider : undefined;
-        const model = typeof args.model === "string" ? args.model : undefined;
-        const providerOptions = typeof args.provider_options_json === "string" ? jsonObject(args.provider_options_json, "provider_options_json") : undefined;
+        const model = optionalOverride(args.model);
+        const voice = optionalOverride(args.voice);
+        const providerOptions = optionalJsonObject(args.provider_options_json, "provider_options_json");
         const defaults = defaultAssetRoute(kind, context.models);
         const switchesDefault = Boolean(model && model !== defaults.model) || Boolean(provider && provider !== defaults.provider) || Boolean(providerOptions);
         if (switchesDefault) {
@@ -270,16 +271,29 @@ function createEditorAgentTools(context: {
           }) === true;
           if (!approved) return { ok: false, message: "The user denied the model or parameter override." };
         }
-        const asset = await generateAsset(args.kind as "image" | "audio" | "music" | "video", {
-          prompt: string(args.prompt, "prompt"), workspace: context.workspace,
-          ...(typeof args.duration === "number" ? { duration: args.duration } : {}),
-          ...(typeof args.voice === "string" ? { voice: args.voice } : {}),
-          ...(provider ? { provider } : {}),
-          ...(model ? { model } : {}),
-          ...(providerOptions ? { providerOptions } : {}),
-          ...(context.signal ? { signal: context.signal } : {}),
-          ...(context.onStage ? { onStage: context.onStage } : {}),
-        });
+        const prompt = string(args.prompt, "prompt");
+        let asset: Awaited<ReturnType<typeof generateAsset>>;
+        try {
+          asset = await generateAsset(args.kind as "image" | "audio" | "music" | "video", {
+            prompt, workspace: context.workspace,
+            ...(typeof args.duration === "number" ? { duration: args.duration } : {}),
+            ...(voice ? { voice } : {}),
+            ...(provider ? { provider } : {}),
+            ...(model ? { model } : {}),
+            ...(providerOptions ? { providerOptions } : {}),
+            ...(context.signal ? { signal: context.signal } : {}),
+            ...(context.onStage ? { onStage: context.onStage } : {}),
+          });
+        } catch (error) {
+          if (error instanceof AssetGenerationError && error.costUsd !== undefined) {
+            await context.store.appendUsage({
+              kind: "asset", provider: error.provider, model: error.model,
+              label: `Failed ${kind}: ${prompt}`.slice(0, 160), costUsd: error.costUsd, estimated: false,
+            });
+            context.onCost?.("asset", error.costUsd);
+          }
+          throw error;
+        }
         await recordAssetUsage(context.store, asset);
         if (asset.costUsd !== undefined) context.onCost?.("asset", asset.costUsd);
         return { ok: true, message: `Created ${asset.id}`, data: asset as unknown as Record<string, unknown> };
@@ -492,7 +506,8 @@ async function musicPath(workspace: AgentWorkspace, source: string, reference: u
   if (bytes.length === 0 || bytes.length > 100_000_000) throw new Error("Catalog music download was empty or too large.");
   await writeFile(path, bytes);
   await workspace.registerAsset({ kind: "music", path, source: "catalog", description: track.title,
-    license: track.license.attribution, sourceUrl: track.sourceUrl, costUsd: 0, costEstimated: false });
+    license: `${track.license.attribution} License: ${track.license.url} Modified: mixed into the edited video's soundtrack.`,
+    sourceUrl: track.sourceUrl, costUsd: 0, costEstimated: false });
   return path;
 }
 
@@ -578,6 +593,20 @@ function jsonObject(value: string, label: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function optionalOverride(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const result = value.trim();
+  if (!result || ["null", "undefined", "default", "none"].includes(result.toLowerCase())) return undefined;
+  return result;
+}
+
+function optionalJsonObject(value: unknown, label: string): Record<string, unknown> | undefined {
+  const text = optionalOverride(value);
+  if (!text) return undefined;
+  const parsed = jsonObject(text, label);
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
 function defaultAssetRoute(kind: "image" | "audio" | "music" | "video", models: DumbEditorSettings["models"]): { provider: "openai" | "openrouter"; model: string } {
   if (kind === "audio") return { provider: "openai", model: models.openai.speech };
   if (kind === "image" && !process.env.OPENROUTER_API_KEY?.trim()) return { provider: "openai", model: "gpt-image-1-mini" };
@@ -588,8 +617,8 @@ async function transcriptionOverrides(
   context: { models: DumbEditorSettings["models"]; permissionMode: AgentPermissionMode; requestApproval?: RequestApproval },
   args: Record<string, unknown>,
 ): Promise<{ model?: string; providerOptions?: Record<string, unknown> }> {
-  const model = typeof args.model === "string" ? args.model : undefined;
-  const providerOptions = typeof args.provider_options_json === "string" ? jsonObject(args.provider_options_json, "provider_options_json") : undefined;
+  const model = optionalOverride(args.model);
+  const providerOptions = optionalJsonObject(args.provider_options_json, "provider_options_json");
   if (!model && !providerOptions) return {};
   const selected = model ?? context.models.openai.transcription;
   const approved = context.permissionMode === "auto" || await context.requestApproval?.({
