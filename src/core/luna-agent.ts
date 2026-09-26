@@ -181,6 +181,8 @@ function agentInstructions(runId: string): string {
     "Use the supplied tools to complete the user's request; you may call several tools in sequence.",
     "Inspect available state, generated assets, and tool results before claiming that work is complete.",
     "Prefer deterministic local editing tools. Generate paid assets only when the request actually needs them.",
+    "When the user asks to add or generate subtitles and the video has audio, call transcribe_and_add_subtitles; do not ask them to provide a transcript first.",
+    "When no specialized edit tool fits, inspect the available general workspace and rendering tools and devise a method before saying the edit is unavailable.",
     "If a tool fails, correct the arguments or explain the exact blocker. Never invent a successful edit.",
     "Keep the final response short and say which version and assets were created.",
     `Agent run: ${runId}`,

@@ -4,6 +4,7 @@ import type { DirectEdit, MediaInfo, Selection } from "../types.js";
 import { executeAdvancedEdit, type AdvancedEdit, type TextPosition, type VisualEffect } from "./advanced-editor.js";
 import { AgentWorkspace } from "./agent-workspace.js";
 import { generateAsset } from "./asset-generation.js";
+import { executeCustomRender } from "./custom-render.js";
 import { executeDirectEdit } from "./editor.js";
 import { runLunaAgent, type AgentTool, type LunaAgentResult } from "./luna-agent.js";
 import { findMusicTrack, searchMusicTracks } from "./music-catalog.js";
@@ -11,6 +12,8 @@ import { selectedMusicTrack } from "./music.js";
 import { extractRawFrame, probeMedia } from "./media.js";
 import { runProcess } from "./process.js";
 import { ProjectStore } from "./project.js";
+import { localSandboxStatus, runSandboxScript } from "./sandbox.js";
+import { transcribeVideoToSrt } from "./transcription.js";
 
 export interface EditorAgentResult extends LunaAgentResult {
   media: MediaInfo;
@@ -94,6 +97,61 @@ function createEditorAgentTools(context: {
     advanced("burn_subtitles", "Burn an SRT, VTT, ASS, or SSA file from the agent workspace into the video.", objectSchema({
       workspace_path: stringSchema(1, 240),
     }), async (args) => ({ action: "subtitles", filePath: await workspacePath(context.workspace, string(args.workspace_path, "workspace_path")) })),
+    {
+      name: "transcribe_and_add_subtitles",
+      description: "Automatically transcribe the active video's speech, create a timed SRT, and burn the subtitles into a new video version. Use this whenever the user asks to add, generate, or create subtitles and has not supplied a subtitle file.",
+      parameters: objectSchema({
+        language: { type: ["string", "null"], maxLength: 40 },
+        context: { type: ["string", "null"], maxLength: 1000 },
+      }),
+      mutatesProject: true,
+      run: async (args) => {
+        const transcription = await transcribeVideoToSrt({
+          filePath: context.store.current.filePath,
+          workspace: context.workspace,
+          ...(typeof args.language === "string" ? { language: args.language } : {}),
+          ...(typeof args.context === "string" ? { context: args.context } : {}),
+          ...(context.signal ? { signal: context.signal } : {}),
+          ...(context.onStage ? { onStage: context.onStage } : {}),
+        });
+        const edited = await executeAdvancedEdit(
+          context.store,
+          { action: "subtitles", filePath: transcription.path },
+          context.request,
+          context.onStage,
+        );
+        return {
+          ok: true,
+          message: `${edited.version.id}: ${edited.version.action}`,
+          data: {
+            versionId: edited.version.id,
+            subtitlePath: transcription.path,
+            cueCount: transcription.cueCount,
+            model: transcription.model,
+            ...(transcription.language ? { language: transcription.language } : {}),
+          },
+        };
+      },
+    },
+    {
+      name: "transcribe_video_audio",
+      description: "Transcribe the active video's speech into a transcript and timed SRT without changing the video. Use this to understand, summarize, or inspect spoken content.",
+      parameters: objectSchema({
+        language: { type: ["string", "null"], maxLength: 40 },
+        context: { type: ["string", "null"], maxLength: 1000 },
+      }),
+      run: async (args) => {
+        const result = await transcribeVideoToSrt({
+          filePath: context.store.current.filePath,
+          workspace: context.workspace,
+          ...(typeof args.language === "string" ? { language: args.language } : {}),
+          ...(typeof args.context === "string" ? { context: args.context } : {}),
+          ...(context.signal ? { signal: context.signal } : {}),
+          ...(context.onStage ? { onStage: context.onStage } : {}),
+        });
+        return { ok: true, message: `Transcribed ${result.cueCount} subtitle cues.`, data: result as unknown as Record<string, unknown> };
+      },
+    },
     advanced("add_image_overlay", "Overlay a generated image asset over a time range.", objectSchema({
       asset_id: stringSchema(1, 100), start: numberSchema(0), end: numberSchema(0),
       x: { type: "integer", minimum: 0 }, y: { type: "integer", minimum: 0 },
@@ -134,6 +192,34 @@ function createEditorAgentTools(context: {
       },
     },
     {
+      name: "render_custom_ffmpeg",
+      description: "Build a custom FFmpeg filter graph when no specialized edit tool fits. Input 0 is the active video; inputs 1 onward are asset_ids in the given order. Produce a labeled video output such as [vout], and optionally an audio output such as [aout] or map 0:a:0?. This is the general composition layer for overlays, animation, transitions, color work, audio processing, and combinations of effects.",
+      parameters: objectSchema({
+        filter_graph: stringSchema(1, 20_000),
+        asset_ids: { type: "array", maxItems: 12, items: stringSchema(1, 100) },
+        video_map: stringSchema(1, 100),
+        audio_map: { type: ["string", "null"], maxLength: 100 },
+        summary: stringSchema(1, 160),
+      }),
+      mutatesProject: true,
+      run: async (args) => {
+        if (!Array.isArray(args.asset_ids) || !args.asset_ids.every((id) => typeof id === "string")) throw new Error("asset_ids must be an array of asset IDs.");
+        const result = await executeCustomRender({
+          store: context.store,
+          workspace: context.workspace,
+          filterGraph: string(args.filter_graph, "filter_graph"),
+          assetIds: args.asset_ids,
+          videoMap: string(args.video_map, "video_map"),
+          audioMap: args.audio_map === null ? null : string(args.audio_map, "audio_map"),
+          summary: string(args.summary, "summary"),
+          request: context.request,
+          ...(context.signal ? { signal: context.signal } : {}),
+          ...(context.onStage ? { onStage: context.onStage } : {}),
+        });
+        return editResult(result);
+      },
+    },
+    {
       name: "inspect_video_frames", description: "Extract up to eight frames and show them to the model for visual inspection.",
       parameters: objectSchema({ timestamps: { type: "array", minItems: 1, maxItems: 8, items: numberSchema(0) }, detail: { type: "string", enum: ["low", "high"] } }),
       run: async (args) => inspectFrames(context.store.current.filePath, args.timestamps, args.detail, context.workspace),
@@ -153,6 +239,43 @@ function createEditorAgentTools(context: {
       run: async (args) => ({ ok: true, message: "Workspace file written", data: { path: await context.workspace.writeText(string(args.path, "path"), string(args.content, "content")) } }),
     },
     {
+      name: "run_sandbox_script", description: "Run a Python or JavaScript file written to the project workspace through DumbEditor's local OS sandbox. Call sandbox_status first. The active video path is passed as the script's first argument; only the project workspace is writable; network and host API keys are unavailable.",
+      parameters: objectSchema({
+        language: { type: "string", enum: ["python", "javascript"] },
+        workspace_path: stringSchema(1, 240),
+        arguments: { type: "array", maxItems: 30, items: stringSchema(0, 500) },
+      }),
+      run: async (args) => {
+        if (!Array.isArray(args.arguments) || !args.arguments.every((item) => typeof item === "string")) throw new Error("arguments must be an array of strings.");
+        context.onStage?.("SANDBOX · running isolated script");
+        const result = await runSandboxScript({
+          language: args.language as "python" | "javascript",
+          workspace: context.workspace,
+          workspacePath: string(args.workspace_path, "workspace_path"),
+          activeVideoPath: context.store.current.filePath,
+          arguments: args.arguments,
+          ...(context.signal ? { signal: context.signal } : {}),
+        });
+        return { ok: true, message: "Sandbox script completed.", data: result };
+      },
+    },
+    {
+      name: "register_workspace_asset", description: "Register an image, video, audio, music, or other file created by a sandbox script so other editing tools can use it by asset ID.",
+      parameters: objectSchema({
+        kind: { type: "string", enum: ["image", "video", "audio", "music", "file"] },
+        workspace_path: stringSchema(1, 240),
+        description: stringSchema(1, 500),
+      }),
+      run: async (args) => {
+        const asset = await context.workspace.registerWorkspaceFile(
+          args.kind as "image" | "video" | "audio" | "music" | "file",
+          string(args.workspace_path, "workspace_path"),
+          string(args.description, "description"),
+        );
+        return { ok: true, message: `Registered ${asset.id}.`, data: asset as unknown as Record<string, unknown> };
+      },
+    },
+    {
       name: "read_workspace_file", description: "Read a text file from the isolated project workspace.", parameters: objectSchema({ path: stringSchema(1, 240) }),
       run: async (args) => ({ ok: true, message: "Workspace file contents", data: { content: await context.workspace.readText(string(args.path, "path")) } }),
     },
@@ -167,8 +290,13 @@ function createEditorAgentTools(context: {
     },
     {
       name: "sandbox_status", description: "Report the project workspace boundary and whether arbitrary script execution is safely available.", parameters: objectSchema({}),
-      run: async () => ({ ok: true, message: "Project files can be written, but arbitrary scripts are not executed because no isolated container runtime is configured.",
-        data: { root: context.workspace.root, scriptExecution: false, builtInFfmpegTools: true } }),
+      run: async () => {
+        const sandbox = await localSandboxStatus();
+        return { ok: true, message: sandbox.available
+          ? `Custom FFmpeg and isolated script execution are available through ${sandbox.detail}.`
+          : `Custom FFmpeg is available. Isolated scripts are disabled: ${sandbox.detail}.`,
+        data: { root: context.workspace.root, scriptExecution: sandbox.available, sandbox: sandbox.detail, customFfmpeg: true, builtInFfmpegTools: true } };
+      },
     },
   ];
 }

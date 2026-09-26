@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { config, parse } from "dotenv";
 import { readSettings, writeSettings } from "./settings.js";
+import { setupLocalSandbox } from "./sandbox.js";
 
 const configDirectory = process.env.DUMBEDITOR_CONFIG_DIR?.trim() || join(homedir(), ".dumbeditor");
 export const userConfigPath = join(configDirectory, ".env");
@@ -38,7 +39,11 @@ export async function runSetup(): Promise<void> {
   await writeFile(userConfigPath, lines.join("\n"), { encoding: "utf8", mode: 0o600 });
   const settings = await readSettings();
   await writeSettings(settings);
-  process.stdout.write(`\nSaved keys to ${userConfigPath}\nSaved model defaults beside them in settings.json\n`);
+  process.stdout.write(`\nSaved keys to ${userConfigPath}\nSaved model defaults beside them in settings.json\n\n`);
+  const sandbox = await setupLocalSandbox((message) => process.stdout.write(`${message}\n`));
+  process.stdout.write(sandbox.available
+    ? `Agent sandbox ready: ${sandbox.detail}\n`
+    : `Agent sandbox unavailable: ${sandbox.detail}\nRun dumbeditor setup again to enable isolated scripts.\n`);
 }
 
 export function providerKeyStatus(): { openai: boolean; openrouter: boolean } {

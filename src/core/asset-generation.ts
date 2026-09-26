@@ -48,10 +48,15 @@ export async function generateAsset(kind: Exclude<AssetKind, "file">, options: G
       : generateOpenAIImage(prompt, options);
   }
 
+  if (kind === "audio") {
+    const openAIKey = process.env.OPENAI_API_KEY?.trim();
+    if (!openAIKey) throw new Error("Speech generation needs an OpenAI key. Run dumbeditor setup.");
+    return generateOpenAISpeech(settings.models.openai.speech, openAIKey, options);
+  }
+
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) throw new Error(`${kind} generation needs an OpenRouter key. Run dumbeditor setup.`);
   if (kind === "video") return generateOpenRouterVideo(settings.models.openrouter.video, apiKey, options);
-  if (kind === "audio") return generateOpenRouterSpeech(settings.models.openrouter.audio, apiKey, options);
   return generateOpenRouterMusic(settings.models.openrouter.music, apiKey, options);
 }
 
@@ -91,15 +96,15 @@ async function generateOpenAIImage(prompt: string, options: GenerateAssetOptions
   return options.workspace.registerAsset({ kind: "image", path, source: "generated", description: prompt, model });
 }
 
-async function generateOpenRouterSpeech(model: string, apiKey: string, options: GenerateAssetOptions): Promise<AgentAsset> {
+async function generateOpenAISpeech(model: string, apiKey: string, options: GenerateAssetOptions): Promise<AgentAsset> {
   options.onStage?.(`Generating speech with ${model}`);
-  const response = await fetch("https://openrouter.ai/api/v1/audio/speech", {
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
     method: "POST",
-    headers: headers(apiKey),
-    body: JSON.stringify({ model, input: options.prompt, voice: options.voice ?? "alloy", response_format: "mp3" }),
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, input: options.prompt, voice: options.voice ?? "marin", response_format: "mp3" }),
     ...(options.signal ? { signal: options.signal } : {}),
   });
-  if (!response.ok) throw new Error(await responseError(response, "OpenRouter speech request failed"));
+  if (!response.ok) throw new Error(await responseError(response, "OpenAI speech request failed"));
   const path = options.workspace.assetPath("audio", ".mp3");
   await writeResponse(path, response, 120_000_000);
   return options.workspace.registerAsset({ kind: "audio", path, source: "generated", description: options.prompt, model });

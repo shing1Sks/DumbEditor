@@ -11,9 +11,10 @@ DumbEditor exists for edits that should not require a wall of buttons, several t
 - Playback, five second seeking, marks, preview audio, and volume controls
 - A real GPT-6 Luna tool loop that can inspect frames and chain several edits
 - Remove, keep, speed, mute, and crop tools
-- Text overlays, burned subtitles, timed image overlays, fades, and ranged visual effects
+- Automatic speech transcription and burned subtitles, plus text overlays, timed image overlays, fades, and ranged visual effects
 - Background music mixing with original audio, volume, looping, trim, and delayed start
 - Image, speech, music, and video asset generation through configured provider models
+- A general FFmpeg composition tool for edits beyond the prepared actions
 - Searchable CC BY 4.0 background music with preview, persistent selection, source, and attribution
 - Project workspace for generated assets, subtitle files, notes, and scripts
 - Immutable versions with undo, revert, branching, export, and configurable retention
@@ -22,11 +23,11 @@ DumbEditor exists for edits that should not require a wall of buttons, several t
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 20.11 or newer
 - `ffmpeg`, `ffprobe`, and optionally `ffplay` on `PATH`
 - Windows Terminal 1.22+ or another Sixel terminal for high resolution preview
 - An OpenAI API key for Luna
-- An optional OpenRouter key for configured image, speech, music, and video generation
+- An optional OpenRouter key for configured image, music, and video generation
 
 ## Install and run
 
@@ -51,7 +52,7 @@ The first no-argument launch explains why DumbEditor was built and how to start.
 
 DumbEditor restores the saved project associated with a source path. Use `dumbeditor --fresh <video>` to delete that source's generated versions, chat, and agent workspace and immediately reopen the untouched source. `dumbeditor clean <video>` performs the same cleanup and exits. Neither command deletes or modifies the source video.
 
-`dumbeditor setup` asks for a required OpenAI key and an optional OpenRouter key with hidden input. It stores them in `~/.dumbeditor/.env`. Model choices live in `~/.dumbeditor/settings.json`. Setup managed config takes precedence over a current-directory `.env` and the package development `.env`. Secrets are excluded from Git.
+`dumbeditor setup` asks for a required OpenAI key and an optional OpenRouter key with hidden input. It stores them in `~/.dumbeditor/.env`. Model choices live in `~/.dumbeditor/settings.json`. On Windows, setup also performs the one-time local sandbox installation with one UAC prompt. Setup managed config takes precedence over a current-directory `.env` and the package development `.env`. Secrets are excluded from Git.
 
 ## Ask Luna
 
@@ -60,7 +61,8 @@ Write normal requests. Luna receives the active version, media details, playhead
 ```text
 remove the first two seconds and mute the last five
 inspect the video, create a small badge, and show it at the top right from 4 to 9 seconds
-write subtitles for these lines, burn them in, then fade out the final second
+add subtitles to this video
+write these supplied subtitle lines, burn them in, then fade out the final second
 use the background music I selected, loop it quietly under the whole video
 generate a five second establishing shot of a rainy city for this project
 ```
@@ -69,13 +71,17 @@ The main editor agent is pinned to `gpt-6-luna`. The default economical asset mo
 
 | Capability | Default |
 | --- | --- |
+| OpenAI editor | `gpt-6-luna` |
+| OpenAI transcription | `gpt-transcribe` |
+| OpenAI speech | `gpt-4o-mini-tts` |
 | OpenRouter text | `openai/gpt-6-luna` |
 | Image | `google/gemini-3.1-flash-lite-image` |
-| Speech audio | `openai/gpt-audio-mini` |
 | Music | `google/lyria-3-clip-preview` |
 | Video | `google/veo-3.1-lite` |
 
 Provider catalogs and prices change. `/model` loads the current catalog and displays each capability in its billing unit before selection.
+
+When asked to add subtitles without a supplied file, Luna extracts the audio in short chunks, transcribes it with the configured OpenAI transcription model, creates a timed SRT in the project workspace, and burns it into a new version. Chunked processing keeps long recordings below individual upload limits. Cue timing is estimated within each chunk because the durable default transcription model returns text rather than word timestamps.
 
 ## Slash commands
 
@@ -128,7 +134,7 @@ After selection, ask Luna to use the selected background music. Luna downloads t
 
 ### Model browser
 
-`/model` opens the provider and capability picker. Type to search. Text shows input and output token prices; audio distinguishes token and character rates; image uses image, megapixel, token, or request rates; music shows song or clip rates; video shows the live SKU range and billing unit.
+`/model` opens the provider and capability picker. OpenAI exposes editor, transcription, and speech defaults. OpenRouter exposes text, image, audio, music, and video defaults. Type to search. Text shows input and output token prices; transcription shows its duration rate; speech and audio show their provider billing units; image uses image, megapixel, token, or request rates; music shows song or clip rates; video shows the live SKU range and billing unit.
 
 ## Controls
 
@@ -162,9 +168,13 @@ flowchart LR
   Luna --> Frames[Frame inspection]
   Luna --> Assets[Asset providers]
   Luna --> Tools[Validated edit tools]
+  Luna --> Compose[Custom FFmpeg composition]
+  Luna --> Sandbox[Optional isolated scripts]
   Assets --> Workspace[Project workspace]
   Workspace --> Tools
   Tools --> FFmpeg
+  Compose --> FFmpeg
+  Sandbox --> Workspace
   FFmpeg --> Version[Probed immutable version]
   Version --> Preview[Terminal preview]
 ```
@@ -186,7 +196,9 @@ Each source has a project directory beside it:
 
 The readable transcript stays in `chat.jsonl`. Raw response items and tool results are appended to the agent ledger. Generated assets and supporting files persist in the project workspace.
 
-The agent can write subtitle files, notes, and scripts inside that workspace. Arbitrary script execution is enabled only through an isolated container runtime. If no supported container is configured, execution fails closed while all built-in FFmpeg tools continue to work. API keys remain in the host process and are never placed in an execution sandbox.
+The agent uses prepared tools for common work and can build a custom FFmpeg filter graph for combinations that do not have a dedicated command. Filter graph inputs are limited to the active video and registered workspace assets.
+
+The agent can also write subtitle files, notes, and scripts inside the workspace. Python and JavaScript scripts run through Anthropic's lightweight Sandbox Runtime, the same open source runtime developed for Claude Code. It uses native OS isolation without a container: a dedicated restricted user and Windows Filtering Platform fence on Windows, Seatbelt on macOS, and bubblewrap plus seccomp on Linux. The active video is read-only, only the current agent workspace is writable, networking is disabled, and API keys are withheld. `dumbeditor setup` performs the one-time Windows sandbox installation with one UAC prompt.
 
 The packaged [`skills`](skills) document the verified video, asset, audio, music, and workspace workflows used by Luna.
 

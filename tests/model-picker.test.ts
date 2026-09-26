@@ -16,6 +16,19 @@ test("opens the model picker at provider selection", () => {
   assert.equal(picker.query, "");
 });
 
+test("presents OpenAI transcription and speech pricing by their billing units", () => {
+  assert.deepEqual(modelPricePresentation("openai", "transcription"), {
+    first: "PRICE",
+    second: "BASIS",
+    note: "Transcription pricing is estimated from audio duration.",
+  });
+  assert.deepEqual(modelPricePresentation("openai", "speech"), {
+    first: "TEXT INPUT",
+    second: "AUDIO OUTPUT",
+    note: "Speech prices show the provider's text and audio token rates.",
+  });
+});
+
 test("filters provider models by display name or model ID", () => {
   const picker = { ...initialModelPicker(), step: "models" as const, provider: "openai" as const, models, query: "luna" };
   assert.deepEqual(filteredPickerModels(picker).map((model) => model.id), ["gpt-6-luna"]);

@@ -1,14 +1,14 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { ProviderModel } from "../core/models.js";
-import { OPENROUTER_SLOTS, type DumbEditorSettings, type ModelProvider, type OpenRouterSlot } from "../core/settings.js";
+import { OPENAI_SLOTS, OPENROUTER_SLOTS, type DumbEditorSettings, type ModelProvider, type ModelSlot, type OpenAISlot, type OpenRouterSlot } from "../core/settings.js";
 
 export type ModelPickerStep = "provider" | "slot" | "models";
 
 export interface ModelPickerState {
   step: ModelPickerStep;
   provider: ModelProvider | null;
-  slot: OpenRouterSlot;
+  slot: ModelSlot;
   models: ProviderModel[];
   query: string;
   selectedIndex: number;
@@ -35,11 +35,17 @@ export function filteredPickerModels(picker: ModelPickerState): ProviderModel[] 
   return picker.models.filter((model) => `${model.name} ${model.id}`.toLowerCase().includes(query));
 }
 
-export function modelPricePresentation(provider: ModelProvider | null, slot: OpenRouterSlot): {
+export function modelPricePresentation(provider: ModelProvider | null, slot: ModelSlot): {
   first: string;
   second: string;
   note: string;
 } {
+  if (provider === "openai" && slot === "transcription") {
+    return { first: "PRICE", second: "BASIS", note: "Transcription pricing is estimated from audio duration." };
+  }
+  if (provider === "openai" && slot === "speech") {
+    return { first: "TEXT INPUT", second: "AUDIO OUTPUT", note: "Speech prices show the provider's text and audio token rates." };
+  }
   if (provider === "openrouter" && slot === "image") {
     return { first: "INPUT RATE", second: "OUTPUT RATE", note: "Image rates show their billing unit; ranges cover provider variants." };
   }
@@ -82,7 +88,7 @@ function Header({ picker }: { picker: ModelPickerState }) {
   const path = picker.step === "provider"
     ? "Provider"
     : picker.step === "slot"
-      ? "OpenRouter / capability"
+      ? `${picker.provider === "openai" ? "OpenAI" : "OpenRouter"} / capability`
       : `${picker.provider === "openai" ? "OpenAI" : "OpenRouter"} / ${picker.slot}`;
   return <Text bold color="cyan">Select default model  <Text dimColor>{path}</Text></Text>;
 }
@@ -93,7 +99,7 @@ function ProviderChoices(props: {
   keys: { openai: boolean; openrouter: boolean };
 }) {
   const providers: Array<{ name: string; status: string; detail: string }> = [
-    { name: "OpenAI", status: props.keys.openai ? "configured" : "key missing", detail: props.settings.models.openai.text },
+    { name: "OpenAI", status: props.keys.openai ? "configured" : "key missing", detail: "editor, transcription, speech" },
     { name: "OpenRouter", status: props.keys.openrouter ? "configured" : "optional key missing", detail: "text, image, audio, music, video" },
   ];
   return <Box flexDirection="column" marginTop={1}>
@@ -105,9 +111,10 @@ function ProviderChoices(props: {
 }
 
 function SlotChoices({ picker, settings }: { picker: ModelPickerState; settings: DumbEditorSettings }) {
+  const slots = picker.provider === "openai" ? OPENAI_SLOTS : OPENROUTER_SLOTS;
   return <Box flexDirection="column" marginTop={1}>
-    {OPENROUTER_SLOTS.map((slot, index) => (
-      <Choice key={slot} selected={index === picker.selectedIndex} primary={capitalize(slot)} secondary={settings.models.openrouter[slot]} />
+    {slots.map((slot, index) => (
+      <Choice key={slot} selected={index === picker.selectedIndex} primary={capitalize(slot)} secondary={configuredModel(settings, picker.provider, slot)} />
     ))}
   </Box>;
 }
@@ -116,7 +123,7 @@ function ModelChoices({ picker, settings, height, width }: { picker: ModelPicker
   const models = filteredPickerModels(picker);
   const room = Math.max(3, height - 6);
   const start = Math.min(Math.max(0, picker.selectedIndex - room + 1), Math.max(0, models.length - room));
-  const current = picker.provider === "openai" ? settings.models.openai.text : settings.models.openrouter[picker.slot];
+  const current = configuredModel(settings, picker.provider, picker.slot);
   const price = modelPricePresentation(picker.provider, picker.slot);
   return <Box flexDirection="column" marginTop={1}>
     <Box borderStyle="round" borderColor="gray" paddingX={1}>
@@ -176,4 +183,9 @@ function Footer({ step }: { step: ModelPickerStep }) {
 
 function capitalize(value: string): string {
   return value[0]?.toUpperCase() + value.slice(1);
+}
+
+function configuredModel(settings: DumbEditorSettings, provider: ModelProvider | null, slot: ModelSlot): string {
+  if (provider === "openai") return settings.models.openai[slot as OpenAISlot] ?? "";
+  return settings.models.openrouter[slot as OpenRouterSlot] ?? "";
 }

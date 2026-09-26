@@ -10,13 +10,14 @@ export interface ProcessResult {
 export async function runProcess(
   command: string,
   args: string[],
-  options: { cwd?: string; timeoutMs?: number; maxOutputBytes?: number; signal?: AbortSignal } = {},
+  options: { cwd?: string; timeoutMs?: number; maxOutputBytes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv } = {},
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
+      ...(options.env ? { env: options.env } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     });
     runningProcesses.add(child);

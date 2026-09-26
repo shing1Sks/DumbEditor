@@ -5,6 +5,8 @@ import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeAdvancedEdit } from "../src/core/advanced-editor.js";
+import { AgentWorkspace } from "../src/core/agent-workspace.js";
+import { executeCustomRender } from "../src/core/custom-render.js";
 import { probeMedia } from "../src/core/media.js";
 import { runProcess } from "../src/core/process.js";
 import { ProjectStore } from "../src/core/project.js";
@@ -147,6 +149,35 @@ test("rejects invalid local inputs and preserves FFmpeg failure details", { time
       /Advanced edit failed: ffmpeg exited with code/,
     );
     assert.equal(store.snapshot.versions.length, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("lets the agent compose a custom FFmpeg graph while confining file inputs", { timeout: 60_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-custom-render-"));
+  try {
+    const source = join(directory, "source.mp4");
+    await runProcess("ffmpeg", [
+      "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:size=160x90:rate=20:duration=1",
+      "-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=44100:d=1",
+      "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", source,
+    ], { timeoutMs: 30_000 });
+    const store = await ProjectStore.open(source);
+    const workspace = new AgentWorkspace(store.createAgentWorkspace());
+    await workspace.initialize();
+    const rendered = await executeCustomRender({
+      store, workspace, filterGraph: "[0:v]negate[vout]", assetIds: [], videoMap: "[vout]", audioMap: "0:a:0?",
+      summary: "Applied Luna's custom negative", request: "make it a negative",
+    });
+    assert.equal(rendered.version.id, "v0001");
+    assert.equal(rendered.media.hasAudio, true);
+    const changed = await pixel(rendered.version.filePath, 0.5, 80, 45);
+    assert.ok(changed[0] > 200 && changed[1] > 200 && changed[2] < 30);
+    await assert.rejects(executeCustomRender({
+      store, workspace, filterGraph: "movie=C\\:/private/file.png[vout]", assetIds: [], videoMap: "[vout]", audioMap: null,
+      summary: "Unsafe input", request: "read another file",
+    }), /may only read the active video and declared workspace assets/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

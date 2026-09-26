@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 
 export type AssetKind = "image" | "video" | "audio" | "music" | "file";
@@ -99,6 +99,20 @@ export class AgentWorkspace {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
+  }
+
+  async resolveFilePath(relativePath: string): Promise<string> {
+    const path = this.resolveRelative(this.filesDirectory, relativePath);
+    await access(path);
+    return path;
+  }
+
+  async registerWorkspaceFile(kind: AssetKind, relativePath: string, description: string): Promise<AgentAsset> {
+    const path = await this.resolveFilePath(relativePath);
+    const details = await stat(path);
+    if (!details.isFile() || details.size === 0) throw new Error("The workspace output is empty or is not a file.");
+    if (details.size > 600_000_000) throw new Error("Workspace assets are limited to 600 MB.");
+    return this.registerAsset({ kind, path, source: "agent", description });
   }
 
   private resolveRelative(base: string, requested: string): string {

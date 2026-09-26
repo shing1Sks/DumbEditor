@@ -4,13 +4,16 @@ import { dirname, join } from "node:path";
 
 export const OPENROUTER_SLOTS = ["text", "image", "audio", "music", "video"] as const;
 export type OpenRouterSlot = typeof OPENROUTER_SLOTS[number];
+export const OPENAI_SLOTS = ["text", "transcription", "speech"] as const;
+export type OpenAISlot = typeof OPENAI_SLOTS[number];
+export type ModelSlot = OpenRouterSlot | OpenAISlot;
 export type ModelProvider = "openai" | "openrouter";
 
 export interface DumbEditorSettings {
   schemaVersion: 1;
   welcomeShown: boolean;
   models: {
-    openai: { text: string };
+    openai: Record<OpenAISlot, string>;
     openrouter: Record<OpenRouterSlot, string>;
   };
 }
@@ -19,7 +22,11 @@ export const DEFAULT_SETTINGS: DumbEditorSettings = {
   schemaVersion: 1,
   welcomeShown: false,
   models: {
-    openai: { text: "gpt-6-luna" },
+    openai: {
+      text: "gpt-6-luna",
+      transcription: "gpt-transcribe",
+      speech: "gpt-4o-mini-tts",
+    },
     openrouter: {
       text: "openai/gpt-6-luna",
       image: "google/gemini-3.1-flash-lite-image",
@@ -49,13 +56,17 @@ export async function writeSettings(settings: DumbEditorSettings): Promise<void>
   await writeFile(settingsPath, `${JSON.stringify(normalizeSettings(settings), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
-export async function setDefaultModel(provider: ModelProvider, slot: OpenRouterSlot, model: string): Promise<DumbEditorSettings> {
+export async function setDefaultModel(provider: ModelProvider, slot: ModelSlot, model: string): Promise<DumbEditorSettings> {
   const value = model.trim();
   if (!value || value.length > 200 || /\s/.test(value)) throw new Error("Model IDs cannot be empty or contain spaces.");
-  if (provider === "openai" && slot !== "text") throw new Error("OpenAI currently uses the text slot for editor requests.");
   const settings = await readSettings();
-  if (provider === "openai") settings.models.openai.text = value;
-  else settings.models.openrouter[slot] = value;
+  if (provider === "openai") {
+    if (!OPENAI_SLOTS.includes(slot as OpenAISlot)) throw new Error(`OpenAI does not support the ${slot} slot.`);
+    settings.models.openai[slot as OpenAISlot] = value;
+  } else {
+    if (!OPENROUTER_SLOTS.includes(slot as OpenRouterSlot)) throw new Error(`OpenRouter does not support the ${slot} slot.`);
+    settings.models.openrouter[slot as OpenRouterSlot] = value;
+  }
   await writeSettings(settings);
   return settings;
 }
@@ -75,7 +86,11 @@ function normalizeSettings(raw: Partial<DumbEditorSettings>): DumbEditorSettings
     schemaVersion: 1,
     welcomeShown: raw.welcomeShown === true,
     models: {
-      openai: { text: cleanModel(raw.models?.openai?.text, DEFAULT_SETTINGS.models.openai.text) },
+      openai: {
+        text: cleanModel(raw.models?.openai?.text, DEFAULT_SETTINGS.models.openai.text),
+        transcription: cleanModel(raw.models?.openai?.transcription, DEFAULT_SETTINGS.models.openai.transcription),
+        speech: cleanModel(raw.models?.openai?.speech, DEFAULT_SETTINGS.models.openai.speech),
+      },
       openrouter: {
         text: cleanModel(openrouter?.text, DEFAULT_SETTINGS.models.openrouter.text),
         image: cleanModel(openrouter?.image, DEFAULT_SETTINGS.models.openrouter.image),

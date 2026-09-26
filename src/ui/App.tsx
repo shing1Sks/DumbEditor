@@ -14,7 +14,7 @@ import { clearMusicSelection, MusicPreviewController, readMusicSelection, select
 import { listProviderModels } from "../core/models.js";
 import { ProjectStore } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
-import { DEFAULT_SETTINGS, OPENROUTER_SLOTS, readSettings, setDefaultModel, type DumbEditorSettings, type ModelProvider, type OpenRouterSlot } from "../core/settings.js";
+import { DEFAULT_SETTINGS, OPENAI_SLOTS, OPENROUTER_SLOTS, readSettings, setDefaultModel, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
 import { formatTime } from "../core/time.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
@@ -27,7 +27,7 @@ import { Timeline } from "./Timeline.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
 type Overlay = "help" | "history" | "model" | "music" | "export" | null;
-interface LoaderState { source: "Luna" | "Command" | "Editor"; stage: string }
+interface LoaderState { source: "Luna" | "Command" | "Editor" | "Sandbox"; stage: string }
 const SPINNER = ["◐", "◓", "◑", "◒"];
 
 export function App({ initialPath }: { initialPath?: string }) {
@@ -209,7 +209,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     }
   }, [answer, exportPanel, project]);
 
-  const loadModelChoices = useCallback(async (provider: ModelProvider, slot: OpenRouterSlot) => {
+  const loadModelChoices = useCallback(async (provider: ModelProvider, slot: ModelSlot) => {
     const request = ++modelRequest.current;
     setModelPicker({ step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: true, error: null });
     setLoader({ source: "Editor", stage: `Loading ${provider} ${slot} models` });
@@ -228,13 +228,13 @@ export function App({ initialPath }: { initialPath?: string }) {
   const chooseModelPickerItem = useCallback(async () => {
     if (modelPicker.loading) return;
     if (modelPicker.step === "provider") {
-      if (modelPicker.selectedIndex === 0) await loadModelChoices("openai", "text");
-      else setModelPicker({ ...initialModelPicker(), step: "slot", provider: "openrouter" });
+      setModelPicker({ ...initialModelPicker(), step: "slot", provider: modelPicker.selectedIndex === 0 ? "openai" : "openrouter" });
       return;
     }
     if (modelPicker.step === "slot") {
-      const slot = OPENROUTER_SLOTS[modelPicker.selectedIndex] ?? "text";
-      await loadModelChoices("openrouter", slot);
+      const slots = modelPicker.provider === "openai" ? OPENAI_SLOTS : OPENROUTER_SLOTS;
+      const slot = slots[modelPicker.selectedIndex] ?? "text";
+      await loadModelChoices(modelPicker.provider ?? "openai", slot);
       return;
     }
     if (!modelPicker.provider) return;
@@ -259,11 +259,11 @@ export function App({ initialPath }: { initialPath?: string }) {
     modelRequest.current += 1;
     setLoader(null);
     if (modelPicker.step === "provider") { setOverlay(null); return; }
-    if (modelPicker.step === "slot" || modelPicker.provider === "openai") {
+    if (modelPicker.step === "slot") {
       setModelPicker(initialModelPicker());
       return;
     }
-    setModelPicker({ ...initialModelPicker(), step: "slot", provider: "openrouter" });
+    setModelPicker({ ...initialModelPicker(), step: "slot", provider: modelPicker.provider });
   }, [modelPicker]);
 
   const handleCommand = useCallback(async (line: string) => {
@@ -327,7 +327,9 @@ export function App({ initialPath }: { initialPath?: string }) {
       const before = project.current.id;
       const result = await runEditorAgent({
         request, store: project, media, currentTime: currentTimeRef.current, selection,
-        onStage: (stage) => setLoader({ source: "Luna", stage }),
+        onStage: (stage) => setLoader(stage.startsWith("SANDBOX · ")
+          ? { source: "Sandbox", stage: stage.slice("SANDBOX · ".length) }
+          : { source: "Luna", stage }),
       });
       if (result.versionId !== before) {
         setMedia(result.media); setRevision((value) => value + 1); movePlayhead(0); setSelection({ in: null, out: null });
@@ -434,7 +436,9 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (modelPicker.loading || busy) return;
       if (key.upArrow || key.downArrow || key.tab) {
         setModelPicker((current) => {
-          const count = current.step === "provider" ? 2 : current.step === "slot" ? OPENROUTER_SLOTS.length : filteredPickerModels(current).length;
+          const count = current.step === "provider" ? 2 : current.step === "slot"
+            ? (current.provider === "openai" ? OPENAI_SLOTS.length : OPENROUTER_SLOTS.length)
+            : filteredPickerModels(current).length;
           if (count === 0) return current;
           const direction = key.upArrow ? -1 : 1;
           return { ...current, selectedIndex: (current.selectedIndex + direction + count) % count };
@@ -529,7 +533,7 @@ export function App({ initialPath }: { initialPath?: string }) {
         ))}
       </Box>
       <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1}>
-        {loader ? <Text color="yellow">{SPINNER[spinnerFrame]} {loader.source} · {loader.stage}</Text>
+        {loader ? <Text color={loader.source === "Sandbox" ? "cyan" : "yellow"}>{SPINNER[spinnerFrame]} {loader.source === "Sandbox" ? "⬡ SANDBOX" : loader.source} · {loader.stage}</Text>
           : overlay === "model" ? <Text color="cyan">Model picker active · use the keyboard in the popup</Text>
             : overlay === "music" ? <Text color="cyan">Music browser active · search, preview, and select in the popup</Text>
               : overlay === "export" ? <Text color="cyan">Export popup active · choose format and compression</Text>

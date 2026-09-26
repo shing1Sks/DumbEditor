@@ -115,7 +115,7 @@ AI credits spent learning an interface. DumbEditor is an agent-first editor: tel
 it what to change, preview the result in your terminal, and keep every edit
 reversible.
 
-1. Run:  dumbeditor setup
+1. Run:  dumbeditor setup  (keys + one-time local agent sandbox)
 2. Open: dumbeditor <video>
 3. Type a request, or type / to discover direct commands.
 
@@ -128,7 +128,7 @@ function helpMessage(installedVersion: string): string {
 Usage:
   dumbeditor <video>    Open a video in the editor
   dumbeditor            Show the project overview and next steps
-  dumbeditor setup      Configure provider API keys
+  dumbeditor setup      Configure provider keys and the local agent sandbox
   dumbeditor clean <video> Remove saved project state; preserve the source
   dumbeditor --fresh <video> Clean the project and open the source immediately
   dumbeditor --help     Show this complete reference

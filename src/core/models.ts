@@ -1,4 +1,4 @@
-import type { ModelProvider, OpenRouterSlot } from "./settings.js";
+import type { ModelProvider, ModelSlot, OpenRouterSlot } from "./settings.js";
 
 export interface ProviderModel {
   id: string;
@@ -56,26 +56,30 @@ const OPENAI_TOKEN_PRICES: Record<string, { inputPrice: string; outputPrice: str
   "gpt-6-sol": { inputPrice: "$2.00", outputPrice: "$10.00" },
   "gpt-6-astra": { inputPrice: "$10.00", outputPrice: "$50.00" },
 };
+const OPENAI_AUDIO_PRICES: Record<string, { inputPrice: string; outputPrice: string }> = {
+  "gpt-transcribe": { inputPrice: "$0.0045", outputPrice: "/min" },
+  "gpt-4o-mini-tts": { inputPrice: "$0.60/M tok", outputPrice: "$12.00/M tok" },
+};
 const CATALOG_CACHE_MS = 5 * 60_000;
 const catalogCache = new Map<string, { at: number; models: ProviderModel[] }>();
 
-export async function listProviderModels(provider: ModelProvider, slot: OpenRouterSlot): Promise<ProviderModel[]> {
+export async function listProviderModels(provider: ModelProvider, slot: ModelSlot): Promise<ProviderModel[]> {
   const cacheKey = `${provider}:${slot}`;
   const cached = catalogCache.get(cacheKey);
   if (cached && Date.now() - cached.at < CATALOG_CACHE_MS) return cached.models.map((model) => ({ ...model }));
-  const models = provider === "openai" ? await listOpenAIModels() : await listOpenRouterModels(slot);
+  const models = provider === "openai" ? await listOpenAIModels(slot) : await listOpenRouterModels(slot as OpenRouterSlot);
   catalogCache.set(cacheKey, { at: Date.now(), models });
   return models.map((model) => ({ ...model }));
 }
 
-async function listOpenAIModels(): Promise<ProviderModel[]> {
+async function listOpenAIModels(slot: ModelSlot): Promise<ProviderModel[]> {
   const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) throw new Error("OpenAI key missing. Run dumbeditor setup.");
   const payload = await fetchCatalog("https://api.openai.com/v1/models", key);
-  return normalize(payload, "text")
-    .filter((model) => /^(gpt-|o\d|chatgpt-)/i.test(model.id))
-    .map((model) => ({ ...model, ...openAIPrice(model.id) }))
-    .sort((a, b) => modelRank(a.id) - modelRank(b.id) || a.id.localeCompare(b.id));
+  return normalize(payload, slot)
+    .filter((model) => matchesOpenAISlot(model.id, slot))
+    .map((model) => ({ ...model, ...(slot === "text" ? openAIPrice(model.id) : openAIAudioPrice(model.id)) }))
+    .sort((a, b) => openAIModelRank(a.id, slot) - openAIModelRank(b.id, slot) || a.id.localeCompare(b.id));
 }
 
 async function listOpenRouterModels(slot: OpenRouterSlot): Promise<ProviderModel[]> {
@@ -119,7 +123,7 @@ async function fetchJson<T extends { error?: { message?: string } }>(url: string
   return payload;
 }
 
-function normalize(payload: CatalogPayload, slot: OpenRouterSlot): ProviderModel[] {
+function normalize(payload: CatalogPayload, slot: ModelSlot): ProviderModel[] {
   return (payload.data ?? []).flatMap((item) => item.id
     ? [{
       id: item.id,
@@ -136,10 +140,26 @@ function openAIPrice(id: string): Partial<ProviderModel> {
   return base ? OPENAI_TOKEN_PRICES[base] ?? {} : {};
 }
 
+function openAIAudioPrice(id: string): Partial<ProviderModel> {
+  return OPENAI_AUDIO_PRICES[id] ?? {};
+}
+
+function matchesOpenAISlot(id: string, slot: ModelSlot): boolean {
+  if (slot === "transcription") return /transcribe|whisper/i.test(id);
+  if (slot === "speech") return /tts/i.test(id);
+  return /^(gpt-|o\d|chatgpt-)/i.test(id) && !/transcribe|tts|audio/i.test(id);
+}
+
+function openAIModelRank(id: string, slot: ModelSlot): number {
+  if (slot === "transcription") return id === "gpt-transcribe" ? 0 : 10;
+  if (slot === "speech") return id === "gpt-4o-mini-tts" ? 0 : 10;
+  return modelRank(id);
+}
+
 function priceFields(
   pricing: CatalogPricing | undefined,
   skus: Record<string, string | number> | undefined,
-  slot: OpenRouterSlot,
+  slot: ModelSlot,
   description?: string,
   outputModalities?: string[],
 ): Partial<ProviderModel> {
