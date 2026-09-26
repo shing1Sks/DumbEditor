@@ -75,7 +75,7 @@ use the background music I selected, loop it quietly under the whole video
 generate a five second establishing shot of a rainy city for this project
 ```
 
-The main editor agent defaults to `gpt-6-luna` and follows the OpenAI editor choice made through `/model`. The default economical asset models are:
+The main editor agent defaults to `gpt-6-luna` and follows the OpenAI editor choice made through `/model`. DumbEditor does not impose a reasoning-round, tool-call, mutation, or output-token cap on the main agent. It continues until it finishes or the user cancels, and uses context compaction during long jobs. The default economical asset models are:
 
 | Capability | Default |
 | --- | --- |

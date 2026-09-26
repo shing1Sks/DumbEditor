@@ -110,3 +110,41 @@ test("Luna executes a tool call and returns the reviewed final response", async 
     else process.env.OPENAI_API_KEY = originalKey;
   }
 });
+
+test("Luna continues beyond the former reasoning round cap", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.OPENAI_API_KEY;
+  let responses = 0;
+  process.env.OPENAI_API_KEY = "test-key";
+  globalThis.fetch = (async () => {
+    responses += 1;
+    if (responses <= 13) return Response.json({
+      output: [{ type: "function_call", name: "continue_work", arguments: "{}", call_id: `call_${responses}` }],
+    });
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "Finished without an application cap." }] }] });
+  }) as typeof fetch;
+  try {
+    const result = await runLunaAgent({
+      model: "gpt-6-sol",
+      request: "complete a long edit",
+      media: { path: "video.mp4", duration: 5, width: 640, height: 360, fps: 30, hasAudio: true, formatName: "mp4" },
+      currentVersionId: "v0000",
+      currentTime: 0,
+      selection: { in: null, out: null },
+      history: [],
+      tools: [{
+        name: "continue_work",
+        description: "Continue a long-running task",
+        parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
+        run: async () => ({ ok: true, message: "Continue" }),
+      }],
+    });
+    assert.equal(result.toolCalls, 13);
+    assert.equal(result.message, "Finished without an application cap.");
+    assert.equal(responses, 14);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalKey;
+  }
+});

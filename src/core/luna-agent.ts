@@ -60,10 +60,6 @@ interface ResponsePayload {
 
 type InputItem = Record<string, unknown>;
 
-const MAX_ROUNDS = 12;
-const MAX_TOOL_CALLS = 24;
-const MAX_MUTATIONS = 8;
-
 export async function runLunaAgent(options: {
   model: string;
   request: string;
@@ -90,7 +86,8 @@ export async function runLunaAgent(options: {
   let costUsd = 0;
   let auditedSinceMutation = true;
 
-  for (let round = 0; round < MAX_ROUNDS; round += 1) {
+  let round = 0;
+  while (true) {
     options.onStage?.(round === 0 ? "planning the edit" : "reviewing tool results");
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -101,7 +98,6 @@ export async function runLunaAgent(options: {
         store: false,
         include: ["reasoning.encrypted_content"],
         context_management: [{ type: "compaction", compact_threshold: 800_000 }],
-        max_output_tokens: 16_000,
         parallel_tool_calls: false,
         tool_choice: "auto",
         instructions: agentInstructions(runId, options.model),
@@ -124,6 +120,7 @@ export async function runLunaAgent(options: {
       await options.onUsage?.(usage);
     }
     const output = payload.output ?? [];
+    round += 1;
     await options.onLedger?.("response", output);
     input.push(...output as InputItem[]);
     const calls = output.filter(isFunctionCall);
@@ -140,14 +137,12 @@ export async function runLunaAgent(options: {
     const toolOutputs: InputItem[] = [];
     for (const call of calls) {
       toolCalls += 1;
-      if (toolCalls > MAX_TOOL_CALLS) throw new Error(`${options.model} exceeded the tool-call limit for one request.`);
       const tool = toolMap.get(call.name);
       let result: AgentToolResult;
       if (!tool) result = { ok: false, message: `Unknown tool: ${call.name}` };
       else {
         if (tool.mutatesProject) {
           mutations += 1;
-          if (mutations > MAX_MUTATIONS) throw new Error(`${options.model} exceeded the edit limit for one request.`);
           auditedSinceMutation = false;
         }
         options.onStage?.(humanize(call.name));
@@ -164,7 +159,6 @@ export async function runLunaAgent(options: {
     await options.onLedger?.("tool", toolOutputs);
     input.push(...toolOutputs);
   }
-  throw new Error(`${options.model} reached the reasoning-round limit before finishing the request.`);
 }
 
 export function calculateLunaUsage(usage: NonNullable<ResponsePayload["usage"]>, model = "gpt-6-luna"): LunaUsage {
