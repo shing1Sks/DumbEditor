@@ -17,6 +17,8 @@ export interface TranscriptionResult {
   cueCount: number;
   model: string;
   language?: string;
+  costUsd: number;
+  costEstimated: true;
 }
 
 export interface TranscribeVideoOptions {
@@ -72,6 +74,8 @@ export async function transcribeVideoToSrt(options: TranscribeVideoOptions): Pro
       transcript: transcriptParts.join("\n\n"),
       cueCount: cues.length,
       model,
+      costUsd: media.duration * 0.0045 / 60,
+      costEstimated: true,
       ...(detectedLanguage ? { language: detectedLanguage } : {}),
     };
   } finally {

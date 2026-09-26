@@ -5,6 +5,7 @@ import { readSettings } from "./settings.js";
 interface ImageResponse {
   data?: Array<{ b64_json?: string; media_type?: string; url?: string }>;
   error?: { message?: string };
+  usage?: ProviderUsage;
 }
 
 interface VideoJob {
@@ -13,12 +14,16 @@ interface VideoJob {
   status?: string;
   unsigned_urls?: string[];
   error?: string | { message?: string };
+  usage?: ProviderUsage;
 }
 
 interface MusicResponse {
   choices?: Array<{ message?: MusicMessage }>;
   error?: { message?: string };
+  usage?: ProviderUsage;
 }
+
+interface ProviderUsage { cost?: number; total_cost?: number }
 
 interface MusicMessage {
   audio?: { data?: string; url?: string; format?: string };
@@ -75,7 +80,8 @@ async function generateOpenRouterImage(model: string, apiKey: string, options: G
   if (image.b64_json) await writeBase64(path, image.b64_json, 60_000_000);
   else if (image.url) await download(image.url, path, apiKey, 60_000_000, options.signal);
   else throw new Error("OpenRouter returned an image without bytes or a URL.");
-  return options.workspace.registerAsset({ kind: "image", path, source: "generated", description: options.prompt, model });
+  return options.workspace.registerAsset({ kind: "image", path, source: "generated", description: options.prompt, model,
+    ...providerCost(payload.usage) });
 }
 
 async function generateOpenAIImage(prompt: string, options: GenerateAssetOptions): Promise<AgentAsset> {
@@ -93,7 +99,9 @@ async function generateOpenAIImage(prompt: string, options: GenerateAssetOptions
   if (!image?.b64_json) throw new Error("OpenAI returned no generated image bytes.");
   const path = options.workspace.assetPath("image", ".png");
   await writeBase64(path, image.b64_json, 60_000_000);
-  return options.workspace.registerAsset({ kind: "image", path, source: "generated", description: prompt, model });
+  const promptTokens = Math.ceil(prompt.length / 4);
+  return options.workspace.registerAsset({ kind: "image", path, source: "generated", description: prompt, model,
+    costUsd: 0.005 + promptTokens * 2 / 1_000_000, costEstimated: true });
 }
 
 async function generateOpenAISpeech(model: string, apiKey: string, options: GenerateAssetOptions): Promise<AgentAsset> {
@@ -107,7 +115,11 @@ async function generateOpenAISpeech(model: string, apiKey: string, options: Gene
   if (!response.ok) throw new Error(await responseError(response, "OpenAI speech request failed"));
   const path = options.workspace.assetPath("audio", ".mp3");
   await writeResponse(path, response, 120_000_000);
-  return options.workspace.registerAsset({ kind: "audio", path, source: "generated", description: options.prompt, model });
+  const textTokens = Math.ceil(options.prompt.length / 4);
+  const estimatedSeconds = Math.max(1, options.prompt.trim().split(/\s+/).length / 2.5);
+  const audioTokens = estimatedSeconds * 25;
+  return options.workspace.registerAsset({ kind: "audio", path, source: "generated", description: options.prompt, model,
+    costUsd: textTokens * 0.60 / 1_000_000 + audioTokens * 12 / 1_000_000, costEstimated: true });
 }
 
 async function generateOpenRouterMusic(model: string, apiKey: string, options: GenerateAssetOptions): Promise<AgentAsset> {
@@ -116,6 +128,7 @@ async function generateOpenRouterMusic(model: string, apiKey: string, options: G
     model,
     modalities: ["text", "audio"],
     messages: [{ role: "user", content: options.prompt }],
+    usage: { include: true },
   }, options.signal);
   const media = findAudio(payload.choices?.[0]?.message);
   if (!media) throw new Error("The selected music model returned no audio data.");
@@ -124,7 +137,8 @@ async function generateOpenRouterMusic(model: string, apiKey: string, options: G
   if (media.data) await writeBase64(path, media.data, 180_000_000);
   else if (media.url) await download(media.url, path, apiKey, 180_000_000, options.signal);
   else throw new Error("The selected music model returned no downloadable audio.");
-  return options.workspace.registerAsset({ kind: "music", path, source: "generated", description: options.prompt, model });
+  return options.workspace.registerAsset({ kind: "music", path, source: "generated", description: options.prompt, model,
+    ...providerCost(payload.usage) });
 }
 
 async function generateOpenRouterVideo(model: string, apiKey: string, options: GenerateAssetOptions): Promise<AgentAsset> {
@@ -151,7 +165,15 @@ async function generateOpenRouterVideo(model: string, apiKey: string, options: G
   options.onStage?.("Downloading generated video");
   const path = options.workspace.assetPath("video", ".mp4");
   await download(contentUrl, path, apiKey, 600_000_000, options.signal);
-  return options.workspace.registerAsset({ kind: "video", path, source: "generated", description: options.prompt, model });
+  return options.workspace.registerAsset({ kind: "video", path, source: "generated", description: options.prompt, model,
+    ...providerCost(job.usage) });
+}
+
+function providerCost(usage: ProviderUsage | undefined): { costUsd?: number; costEstimated?: boolean } {
+  const value = usage?.cost ?? usage?.total_cost;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? { costUsd: value, costEstimated: false }
+    : {};
 }
 
 async function requestJson<T extends { error?: unknown }>(url: string, apiKey: string, body: object, signal?: AbortSignal): Promise<T> {

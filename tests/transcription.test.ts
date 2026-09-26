@@ -32,6 +32,8 @@ test("transcribes video audio into a timed SRT inside the agent workspace", asyn
     const srt = await readFile(result.path, "utf8");
     assert.equal(result.model, "gpt-transcribe");
     assert.equal(result.language, "en");
+    assert.equal(result.costEstimated, true);
+    assert.ok(result.costUsd > 0);
     assert.ok(result.cueCount >= 2);
     assert.match(srt, /00:00:00,000 -->/);
     assert.match(srt, /DumbEditor creates subtitles\s+automatically\./);
@@ -65,6 +67,8 @@ test("generates speech through the configured direct OpenAI TTS model", async ()
     assert.equal(requestedBody.voice, "marin");
     assert.equal(asset.kind, "audio");
     assert.equal(asset.model, "gpt-4o-mini-tts");
+    assert.equal(asset.costEstimated, true);
+    assert.ok((asset.costUsd ?? 0) > 0);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.OPENAI_API_KEY;

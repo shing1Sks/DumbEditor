@@ -22,6 +22,15 @@ export interface LunaAgentResult {
   model: string;
   toolCalls: number;
   mutations: number;
+  costUsd: number;
+}
+
+export interface LunaUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  costUsd: number;
 }
 
 interface FunctionCallItem {
@@ -41,6 +50,11 @@ interface ResponsePayload {
   output?: Array<FunctionCallItem | MessageItem | Record<string, unknown>>;
   output_text?: string;
   error?: { message?: string };
+  usage?: {
+    input_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+    output_tokens?: number;
+  };
 }
 
 type InputItem = Record<string, unknown>;
@@ -61,6 +75,7 @@ export async function runLunaAgent(options: {
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
   onLedger?: (direction: "response" | "tool", items: unknown[]) => Promise<void>;
+  onUsage?: (usage: LunaUsage) => Promise<void>;
 }): Promise<LunaAgentResult> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OpenAI API key is missing. Run dumbeditor setup.");
@@ -71,6 +86,7 @@ export async function runLunaAgent(options: {
   const input: InputItem[] = conversationItems(options.history, request, editorState(options));
   let toolCalls = 0;
   let mutations = 0;
+  let costUsd = 0;
 
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
     options.onStage?.(round === 0 ? "Luna is planning the edit" : "Luna is reviewing tool results");
@@ -100,6 +116,11 @@ export async function runLunaAgent(options: {
     });
     const payload = await response.json().catch(() => ({})) as ResponsePayload;
     if (!response.ok) throw new Error(`OpenAI agent request failed: ${payload.error?.message ?? `HTTP ${response.status}`}`);
+    if (payload.usage) {
+      const usage = calculateLunaUsage(payload.usage);
+      costUsd += usage.costUsd;
+      await options.onUsage?.(usage);
+    }
     const output = payload.output ?? [];
     await options.onLedger?.("response", output);
     input.push(...output as InputItem[]);
@@ -107,7 +128,7 @@ export async function runLunaAgent(options: {
     if (calls.length === 0) {
       const message = responseText(payload);
       if (!message) throw new Error("Luna finished without an edit summary or response.");
-      return { message, model: MAIN_MODEL, toolCalls, mutations };
+      return { message, model: MAIN_MODEL, toolCalls, mutations, costUsd };
     }
 
     const toolOutputs: InputItem[] = [];
@@ -136,6 +157,29 @@ export async function runLunaAgent(options: {
     input.push(...toolOutputs);
   }
   throw new Error("Luna reached the reasoning-round limit before finishing the request.");
+}
+
+export function calculateLunaUsage(usage: NonNullable<ResponsePayload["usage"]>): LunaUsage {
+  const inputTokens = positive(usage.input_tokens);
+  const cachedInputTokens = Math.min(inputTokens, positive(usage.input_tokens_details?.cached_tokens));
+  const cacheWriteTokens = Math.min(inputTokens - cachedInputTokens, positive(usage.input_tokens_details?.cache_write_tokens));
+  const ordinaryInputTokens = Math.max(0, inputTokens - cachedInputTokens - cacheWriteTokens);
+  const outputTokens = positive(usage.output_tokens);
+  const longContext = inputTokens > 272_000;
+  const perMillion = longContext
+    ? { input: 0.20, cached: 0.02, cacheWrite: 0.25, output: 0.75 }
+    : { input: 0.10, cached: 0.01, cacheWrite: 0.125, output: 0.50 };
+  const costUsd = (
+    ordinaryInputTokens * perMillion.input
+    + cachedInputTokens * perMillion.cached
+    + cacheWriteTokens * perMillion.cacheWrite
+    + outputTokens * perMillion.output
+  ) / 1_000_000;
+  return { inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, costUsd };
+}
+
+function positive(value: number | undefined): number {
+  return Number.isFinite(value) && Number(value) > 0 ? Number(value) : 0;
 }
 
 async function runTool(tool: AgentTool, encodedArguments: string): Promise<AgentToolResult> {

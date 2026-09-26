@@ -7,7 +7,7 @@ DumbEditor exists for edits that should not require a wall of buttons, several t
 ## V1 features
 
 - High resolution Sixel video preview in supported terminals, with an ANSI fallback
-- Stable player, timeline, chat, version sidebar, and session sidebar
+- Stable player, timeline, chat, combined session/version sidebar, and asset sidebar
 - Playback, five second seeking, marks, preview audio, and volume controls
 - A real GPT-6 Luna tool loop that can inspect frames and chain several edits
 - Remove, keep, speed, mute, and crop tools
@@ -20,6 +20,7 @@ DumbEditor exists for edits that should not require a wall of buttons, several t
 - Immutable versions with undo, revert, branching, export, and configurable retention
 - Interactive OpenAI and OpenRouter model catalogs with capability specific pricing units
 - Loaders for planning, provider generation, FFmpeg rendering, output checks, and version commits
+- Persistent Luna and asset cost ledger with per-asset model and generation cost
 
 ## Requirements
 
@@ -148,6 +149,13 @@ After selection, ask Luna to use the selected background music. Luna downloads t
 | `Enter` | Send, complete, or select |
 | `Esc` | Clear input or close a panel |
 | `Ctrl+C` | Quit and terminate preview processes |
+| `Shift+A` | Open or close the project asset browser |
+
+### Assets and cost tracking
+
+The right sidebar lists generated images, video, speech, music, subtitles, and agent workspace files. Each generated asset records its provider model and cost when the provider returns billing data; estimates are marked with `~`. Catalog and local assets are shown as free. Press `Shift+A` to browse the full list, use Up and Down to select an asset, and press Space to play audio, music, or video. Image and video assets have an inline preview. Start typing to close the browser, restore the main video player, and continue the text in chat.
+
+The chat footer shows the running Luna cost, asset cost, and project total. These values are stored in the source video's `.dumbeditor` project and survive restarts. Luna cost includes every Responses API round in a tool loop, including cached input and reasoning output reported by the API.
 
 ## Preview backend
 

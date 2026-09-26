@@ -3,10 +3,12 @@ import { appendFile, copyFile, mkdir, readFile, rm, unlink, writeFile } from "no
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ChatMessage, ProjectState, VersionEntry } from "../types.js";
 import { probeMedia } from "./media.js";
+import { createUsageEntry, isUsageEntry, summarizeUsage, type UsageEntry, type UsageSummary } from "./usage.js";
 
 const STATE_FILE = "project.json";
 const CHAT_FILE = "chat.jsonl";
 const AGENT_CONTEXT_FILE = "context.jsonl";
+const USAGE_FILE = "usage.jsonl";
 export const DEFAULT_VERSION_LIMIT = 5;
 
 export class ProjectStore {
@@ -174,6 +176,26 @@ export class ProjectStore {
     const at = new Date().toISOString();
     const lines = items.map((item) => JSON.stringify({ at, direction, item })).join("\n");
     await appendFile(path, `${lines}\n`, "utf8");
+  }
+
+  async appendUsage(entry: Omit<UsageEntry, "id" | "at">): Promise<UsageEntry> {
+    const recorded = createUsageEntry(entry);
+    await appendFile(join(this.state.projectDir, USAGE_FILE), `${JSON.stringify(recorded)}\n`, "utf8");
+    return recorded;
+  }
+
+  async usageEntries(): Promise<UsageEntry[]> {
+    try {
+      const raw = await readFile(join(this.state.projectDir, USAGE_FILE), "utf8");
+      return raw.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as unknown).filter(isUsageEntry);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  async usageSummary(): Promise<UsageSummary> {
+    return summarizeUsage(await this.usageEntries());
   }
 
   createAgentWorkspace(): string {

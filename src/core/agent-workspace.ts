@@ -13,6 +13,8 @@ export interface AgentAsset {
   model?: string;
   license?: string;
   sourceUrl?: string;
+  costUsd?: number;
+  costEstimated?: boolean;
   createdAt: string;
 }
 
@@ -112,7 +114,7 @@ export class AgentWorkspace {
     const details = await stat(path);
     if (!details.isFile() || details.size === 0) throw new Error("The workspace output is empty or is not a file.");
     if (details.size > 600_000_000) throw new Error("Workspace assets are limited to 600 MB.");
-    return this.registerAsset({ kind, path, source: "agent", description });
+    return this.registerAsset({ kind, path, source: "agent", description, costUsd: 0, costEstimated: false });
   }
 
   private resolveRelative(base: string, requested: string): string {
@@ -139,5 +141,7 @@ function isAgentAsset(value: unknown): value is AgentAsset {
     && typeof asset.path === "string"
     && typeof asset.description === "string"
     && typeof asset.createdAt === "string"
+    && (asset.costUsd === undefined || (typeof asset.costUsd === "number" && Number.isFinite(asset.costUsd) && asset.costUsd >= 0))
+    && (asset.costEstimated === undefined || typeof asset.costEstimated === "boolean")
     && typeof extname(asset.path) === "string";
 }

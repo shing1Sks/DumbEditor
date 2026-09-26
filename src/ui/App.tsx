@@ -3,6 +3,7 @@ import { basename, extname, resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { ChildProcess } from "node:child_process";
 import type { ChatMessage, DirectEdit, MediaInfo, Selection } from "../types.js";
+import { AgentWorkspace, type AgentAsset } from "../core/agent-workspace.js";
 import { runEditorAgent } from "../core/agent-runtime.js";
 import { commandSuggestions, parseEditCommand } from "../core/commands.js";
 import { providerKeyStatus } from "../core/config.js";
@@ -16,17 +17,19 @@ import { ProjectStore } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
 import { DEFAULT_SETTINGS, OPENAI_SLOTS, OPENROUTER_SLOTS, readSettings, setDefaultModel, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
 import { formatTime } from "../core/time.js";
+import { EMPTY_USAGE_SUMMARY, formatUsd, type UsageSummary } from "../core/usage.js";
+import { AssetPanel } from "./AssetPanel.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { editorLayout } from "./layout.js";
 import { ExportPanel, type ExportFocus, type ExportPanelState } from "./ExportPanel.js";
 import { filteredPickerModels, initialModelPicker, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
 import { MusicPanel } from "./MusicPanel.js";
-import { SessionSidebar, VersionsSidebar } from "./Sidebars.js";
+import { AssetsSidebar, ProjectSidebar } from "./Sidebars.js";
 import { Timeline } from "./Timeline.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
-type Overlay = "help" | "history" | "model" | "music" | "export" | null;
+type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | null;
 interface LoaderState { source: "Luna" | "Command" | "Editor" | "Sandbox"; stage: string }
 const SPINNER = ["◐", "◓", "◑", "◒"];
 
@@ -49,6 +52,11 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [loader, setLoader] = useState<LoaderState | null>(null);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [status, setStatus] = useState("Ready");
+  const [assets, setAssets] = useState<AgentAsset[]>([]);
+  const [usage, setUsage] = useState<UsageSummary>(EMPTY_USAGE_SUMMARY);
+  const [assetIndex, setAssetIndex] = useState(0);
+  const [assetPlaying, setAssetPlaying] = useState(false);
+  const assetPreview = useRef<ChildProcess | null>(null);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [settings, setSettings] = useState<DumbEditorSettings>(() => structuredClone(DEFAULT_SETTINGS));
@@ -77,7 +85,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     return () => clearInterval(timer);
   }, [busy]);
   useEffect(() => { setSuggestionIndex(0); }, [input]);
-  useEffect(() => () => { musicPreview.current?.dispose(); terminateRunningProcesses(); }, []);
+  useEffect(() => () => { musicPreview.current?.dispose(); terminateProcess(assetPreview.current); terminateRunningProcesses(); }, []);
   useEffect(() => { void readSettings().then(setSettings).catch((error) => setStatus(errorMessage(error))); }, []);
   useEffect(() => {
     if (overlay !== "model") { setModelOverlayReady(false); return; }
@@ -108,6 +116,19 @@ export function App({ initialPath }: { initialPath?: string }) {
     addUiMessage("assistant", content);
     if (project) await project.addChat("assistant", content);
   }, [addUiMessage, project]);
+  const stopAssetPlayback = useCallback(() => {
+    terminateProcess(assetPreview.current);
+    assetPreview.current = null;
+    setAssetPlaying(false);
+  }, []);
+
+  const refreshProjectData = useCallback(async (store: ProjectStore) => {
+    const workspace = new AgentWorkspace(store.createAgentWorkspace());
+    const [nextAssets, nextUsage] = await Promise.all([workspace.assets(), store.usageSummary()]);
+    setAssets(nextAssets);
+    setUsage(nextUsage);
+    setAssetIndex((value) => Math.max(0, Math.min(value, nextAssets.length - 1)));
+  }, []);
 
   const openVideo = useCallback(async (path: string) => {
     setLoader({ source: "Editor", stage: "Opening video" });
@@ -117,13 +138,14 @@ export function App({ initialPath }: { initialPath?: string }) {
       setLoader({ source: "Editor", stage: "Reading media details" });
       const nextMedia = await probeMedia(store.current.filePath);
       const history = await store.chatHistory();
+      await refreshProjectData(store);
       setProject(store); setRevision((value) => value + 1); setMedia(nextMedia); setMessages(history.slice(-50));
       setSelection({ in: null, out: null }); currentTimeRef.current = 0; setCurrentTime(0);
       setStatus(`Opened ${basename(path)}`);
       addUiMessage("assistant", `Opened ${basename(path)} · ${nextMedia.width}x${nextMedia.height} · ${formatTime(nextMedia.duration)}`);
     } catch (error) { addUiMessage("assistant", errorMessage(error)); setStatus("Open failed"); }
     finally { setLoader(null); }
-  }, [addUiMessage]);
+  }, [addUiMessage, refreshProjectData]);
 
   useEffect(() => {
     if (didOpenInitialPath.current) return;
@@ -327,10 +349,17 @@ export function App({ initialPath }: { initialPath?: string }) {
       const before = project.current.id;
       const result = await runEditorAgent({
         request, store: project, media, currentTime: currentTimeRef.current, selection,
+        onCost: (kind, costUsd) => setUsage((current) => ({
+          totalUsd: current.totalUsd + costUsd,
+          lunaUsd: current.lunaUsd + (kind === "luna" ? costUsd : 0),
+          assetUsd: current.assetUsd + (kind === "asset" ? costUsd : 0),
+          entries: current.entries + 1,
+        })),
         onStage: (stage) => setLoader(stage.startsWith("SANDBOX · ")
           ? { source: "Sandbox", stage: stage.slice("SANDBOX · ".length) }
           : { source: "Luna", stage }),
       });
+      await refreshProjectData(project);
       if (result.versionId !== before) {
         setMedia(result.media); setRevision((value) => value + 1); movePlayhead(0); setSelection({ in: null, out: null });
       }
@@ -338,10 +367,52 @@ export function App({ initialPath }: { initialPath?: string }) {
       await answer(result.message); setStatus(`${result.model} · ${result.toolCalls} tools`);
     } catch (error) { await answer(errorMessage(error)); setStatus("Luna request failed"); }
     finally { setLoader(null); }
-  }, [addUiMessage, answer, busy, handleCommand, input, media, movePlayhead, project, selection, suggestionIndex, suggestions]);
+  }, [addUiMessage, answer, busy, handleCommand, input, media, movePlayhead, project, refreshProjectData, selection, suggestionIndex, suggestions]);
 
   useInput((character, key) => {
     if (key.ctrl && character === "c") { exit(); return; }
+    if (overlay === "assets") {
+      const closeAssets = () => {
+        terminateProcess(assetPreview.current);
+        assetPreview.current = null;
+        setAssetPlaying(false);
+        setOverlay(null);
+      };
+      if (key.escape || (key.shift && character.toLowerCase() === "a")) { closeAssets(); return; }
+      if (key.upArrow || key.downArrow) {
+        terminateProcess(assetPreview.current);
+        assetPreview.current = null;
+        setAssetPlaying(false);
+        if (assets.length > 0) setAssetIndex((value) => (value + (key.upArrow ? -1 : 1) + assets.length) % assets.length);
+        return;
+      }
+      if (character === " ") {
+        const asset = assets[assetIndex];
+        if (!asset || !["audio", "music", "video"].includes(asset.kind)) return;
+        if (assetPlaying) {
+          terminateProcess(assetPreview.current);
+          assetPreview.current = null;
+          setAssetPlaying(false);
+        } else {
+          if (asset.kind === "video") {
+            assetPreview.current = playAudio(asset.path, 0, volume, () => undefined);
+            setAssetPlaying(true);
+          } else {
+            assetPreview.current = playAudio(asset.path, 0, volume, (error) => { setStatus(error.message); setAssetPlaying(false); });
+            setAssetPlaying(assetPreview.current !== null);
+            assetPreview.current?.once("close", () => setAssetPlaying(false));
+          }
+        }
+        return;
+      }
+      if (character && !key.ctrl && !key.meta && !key.tab) {
+        closeAssets();
+        const text = character.replace(/[\r\n]+/g, " ");
+        setInput(text);
+        setInputCursor(text.length);
+      }
+      return;
+    }
     if (overlay === "export") {
       if (key.escape) { if (!busy) setOverlay(null); return; }
       if (busy) return;
@@ -464,6 +535,12 @@ export function App({ initialPath }: { initialPath?: string }) {
     }
     if (key.escape) { if (overlay) setOverlay(null); else { setInput(""); setInputCursor(0); } return; }
     if (busy) return;
+    if (key.shift && character.toLowerCase() === "a") {
+      setPlaying(false);
+      setAssetIndex(Math.max(0, assets.length - 1));
+      setOverlay("assets");
+      return;
+    }
     if (key.tab && suggestions.length > 0) {
       const selected = suggestions[suggestionIndex] ?? suggestions[0];
       if (selected) { setInput(`${selected.name} `); setInputCursor(selected.name.length + 1); }
@@ -508,14 +585,19 @@ export function App({ initialPath }: { initialPath?: string }) {
           : overlay === "music" ? <MusicPanel tracks={musicTracks} query={musicQuery} selectedIndex={musicIndex}
               selectedId={selectedMusicId} previewId={previewMusicId} width={terminal.columns - 2} height={layout.playerRows} />
           : overlay === "export" ? <ExportPanel state={exportPanel} width={terminal.columns - 2} height={layout.playerRows} />
+          : overlay === "assets" ? <AssetPanel assets={assets} selectedIndex={assetIndex} playing={assetPlaying}
+              onPlaybackEnd={stopAssetPlayback}
+              width={terminal.columns - 2} height={layout.playerRows} />
           : <>
-            {layout.leftSidebarColumns > 0 && <VersionsSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""} width={layout.leftSidebarColumns} height={layout.playerRows} />}
+            {layout.leftSidebarColumns > 0 && <ProjectSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""}
+              model={settings.models.openai.text} usage={usage} versionLimit={project?.versionLimit ?? 5}
+              width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
               columns={layout.videoColumns} rows={layout.playerRows} topRow={2} leftColumn={2 + layout.leftSidebarColumns}
               timelineColumns={terminal.columns} selection={selection}
               onTime={updatePreviewTime} onEnd={() => setPlaying(false)} onError={(error) => { setStatus(`Preview unavailable: ${error.message}`); setPlaying(false); }} />
-            {layout.rightSidebarColumns > 0 && <SessionSidebar media={media} selection={selection} versionLimit={project?.versionLimit ?? 5}
-              model={settings.models.openai.text} width={layout.rightSidebarColumns} height={layout.playerRows} />}
+            {layout.rightSidebarColumns > 0 && <AssetsSidebar assets={assets} usage={usage}
+              width={layout.rightSidebarColumns} height={layout.playerRows} />}
           </>}
       </Box>
       <Box height={1} minHeight={1}>{media ? <Timeline current={currentTime} duration={media.duration} selection={selection} width={terminal.columns} /> : <Text> </Text>}</Box>
@@ -537,9 +619,12 @@ export function App({ initialPath }: { initialPath?: string }) {
           : overlay === "model" ? <Text color="cyan">Model picker active · use the keyboard in the popup</Text>
             : overlay === "music" ? <Text color="cyan">Music browser active · search, preview, and select in the popup</Text>
               : overlay === "export" ? <Text color="cyan">Export popup active · choose format and compression</Text>
+                : overlay === "assets" ? <Text color="cyan">Asset browser active · browse, preview, or type to return to chat</Text>
             : <><Text color="cyan">› </Text><Text>{input.slice(0, inputCursor)}</Text><Text inverse>{input[inputCursor] ?? " "}</Text><Text>{input.slice(inputCursor + (inputCursor < input.length ? 1 : 0))}</Text></>}
       </Box>
-      <Text dimColor>{loader ? `${loader.source} is working · please wait` : `${status} · ${settings.models.openai.text} · Enter to send · Ctrl+C to quit`}</Text>
+      <Text dimColor>{loader
+        ? `${loader.source} is working · Luna ${formatUsd(usage.lunaUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)}`
+        : `${status} · Luna ${formatUsd(usage.lunaUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · Enter to send · Ctrl+C to quit`}</Text>
     </Box>
   );
 }

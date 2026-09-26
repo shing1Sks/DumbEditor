@@ -28,6 +28,7 @@ export async function runEditorAgent(options: {
   selection: Selection;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
+  onCost?: (kind: "luna" | "asset", costUsd: number) => void;
 }): Promise<EditorAgentResult> {
   const workspace = new AgentWorkspace(options.store.createAgentWorkspace());
   await workspace.initialize();
@@ -46,6 +47,21 @@ export async function runEditorAgent(options: {
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.onStage ? { onStage: options.onStage } : {}),
     onLedger: (direction, items) => options.store.appendAgentContext(direction, items),
+    onUsage: async (usage) => {
+      await options.store.appendUsage({
+        kind: "luna",
+        provider: "openai",
+        model: "gpt-6-luna",
+        label: options.request.slice(0, 160),
+        costUsd: usage.costUsd,
+        estimated: false,
+        inputTokens: usage.inputTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+        outputTokens: usage.outputTokens,
+      });
+      options.onCost?.("luna", usage.costUsd);
+    },
   });
   return {
     ...result,
@@ -60,6 +76,7 @@ function createEditorAgentTools(context: {
   workspace: AgentWorkspace;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
+  onCost?: (kind: "luna" | "asset", costUsd: number) => void;
 }): AgentTool[] {
   const direct = (name: string, description: string, parameters: Record<string, unknown>, make: (args: Record<string, unknown>) => DirectEdit): AgentTool => ({
     name, description, parameters, mutatesProject: true,
@@ -114,6 +131,7 @@ function createEditorAgentTools(context: {
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.onStage ? { onStage: context.onStage } : {}),
         });
+        const subtitleAsset = await registerTranscription(context, transcription);
         const edited = await executeAdvancedEdit(
           context.store,
           { action: "subtitles", filePath: transcription.path },
@@ -128,6 +146,8 @@ function createEditorAgentTools(context: {
             subtitlePath: transcription.path,
             cueCount: transcription.cueCount,
             model: transcription.model,
+            assetId: subtitleAsset.id,
+            costUsd: transcription.costUsd,
             ...(transcription.language ? { language: transcription.language } : {}),
           },
         };
@@ -149,7 +169,8 @@ function createEditorAgentTools(context: {
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.onStage ? { onStage: context.onStage } : {}),
         });
-        return { ok: true, message: `Transcribed ${result.cueCount} subtitle cues.`, data: result as unknown as Record<string, unknown> };
+        const asset = await registerTranscription(context, result);
+        return { ok: true, message: `Transcribed ${result.cueCount} subtitle cues.`, data: { ...result, assetId: asset.id } as unknown as Record<string, unknown> };
       },
     },
     advanced("add_image_overlay", "Overlay a generated image asset over a time range.", objectSchema({
@@ -188,6 +209,8 @@ function createEditorAgentTools(context: {
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.onStage ? { onStage: context.onStage } : {}),
         });
+        await recordAssetUsage(context.store, asset);
+        if (asset.costUsd !== undefined) context.onCost?.("asset", asset.costUsd);
         return { ok: true, message: `Created ${asset.id}`, data: asset as unknown as Record<string, unknown> };
       },
     },
@@ -353,8 +376,39 @@ async function musicPath(workspace: AgentWorkspace, source: string, reference: u
   if (bytes.length === 0 || bytes.length > 100_000_000) throw new Error("Catalog music download was empty or too large.");
   await writeFile(path, bytes);
   await workspace.registerAsset({ kind: "music", path, source: "catalog", description: track.title,
-    license: track.license.attribution, sourceUrl: track.sourceUrl });
+    license: track.license.attribution, sourceUrl: track.sourceUrl, costUsd: 0, costEstimated: false });
   return path;
+}
+
+async function registerTranscription(
+  context: { store: ProjectStore; workspace: AgentWorkspace; onCost?: (kind: "luna" | "asset", costUsd: number) => void },
+  transcription: Awaited<ReturnType<typeof transcribeVideoToSrt>>,
+) {
+  const asset = await context.workspace.registerAsset({
+    kind: "file",
+    path: transcription.path,
+    source: "generated",
+    description: `Subtitles (${transcription.cueCount} cues)`,
+    model: transcription.model,
+    costUsd: transcription.costUsd,
+    costEstimated: transcription.costEstimated,
+  });
+  await recordAssetUsage(context.store, asset);
+  context.onCost?.("asset", transcription.costUsd);
+  return asset;
+}
+
+async function recordAssetUsage(store: ProjectStore, asset: Awaited<ReturnType<AgentWorkspace["registerAsset"]>>): Promise<void> {
+  if (asset.costUsd === undefined) return;
+  await store.appendUsage({
+    kind: "asset",
+    provider: asset.source === "catalog" || asset.source === "agent" ? "local" : asset.model?.includes("/") ? "openrouter" : "openai",
+    model: asset.model ?? asset.source,
+    label: asset.description.slice(0, 160),
+    costUsd: asset.costUsd,
+    estimated: asset.costEstimated ?? false,
+    assetId: asset.id,
+  });
 }
 
 async function workspacePath(workspace: AgentWorkspace, requested: string): Promise<string> {
