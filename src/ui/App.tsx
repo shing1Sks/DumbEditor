@@ -115,6 +115,11 @@ export function App({ initialPath }: { initialPath?: string }) {
     assetPreview.current = null;
     setAssetPlaying(false);
   }, []);
+  const handlePreviewEnd = useCallback(() => setPlaying(false), []);
+  const handlePreviewError = useCallback((error: Error) => {
+    setStatus(`Preview unavailable: ${error.message}`);
+    setPlaying(false);
+  }, []);
   const closeAssetBrowser = useCallback(() => {
     stopAssetPlayback();
     setOverlay(null);
@@ -596,7 +601,7 @@ export function App({ initialPath }: { initialPath?: string }) {
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
               columns={layout.videoColumns} rows={layout.playerRows} topRow={2} leftColumn={2 + layout.leftSidebarColumns}
               timelineColumns={terminal.columns} selection={selection}
-              onTime={updatePreviewTime} onEnd={() => setPlaying(false)} onError={(error) => { setStatus(`Preview unavailable: ${error.message}`); setPlaying(false); }} />
+              onTime={updatePreviewTime} onEnd={handlePreviewEnd} onError={handlePreviewError} />
             {layout.rightSidebarColumns > 0 && <AssetsSidebar assets={assets} usage={usage}
               width={layout.rightSidebarColumns} height={layout.playerRows} />}
           </>}

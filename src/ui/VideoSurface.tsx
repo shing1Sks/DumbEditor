@@ -17,7 +17,7 @@ interface PendingFrame {
   time: number;
 }
 
-export function VideoSurface(props: {
+export const VideoSurface = React.memo(function VideoSurface(props: {
   filePath?: string;
   media: MediaInfo | null;
   playing: boolean;
@@ -188,7 +188,7 @@ export function VideoSurface(props: {
       {!props.filePath && <Text dimColor>No video loaded</Text>}
     </Box>
   );
-}
+});
 
 export function activePreviewBackend(): PreviewBackend {
   return detectPreviewBackend();
