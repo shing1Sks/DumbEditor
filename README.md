@@ -29,7 +29,7 @@ DumbEditor exists for edits that should not require a wall of buttons, several t
 
 - Node.js 20.11 or newer
 - `ffmpeg`, `ffprobe`, and optionally `ffplay` on `PATH`
-- Windows Terminal 1.22+ or another Sixel terminal for high resolution preview
+- Windows Terminal 1.23+ or another Sixel terminal with synchronized output for a stable high resolution preview
 - An OpenAI API key for the main editor agent
 - An optional OpenRouter key for configured image, music, and video generation
 - An optional Anthropic API key for the Claude coding harness
