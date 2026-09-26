@@ -28,6 +28,7 @@ export const COMMANDS: CommandDefinition[] = [
   { name: "/play", usage: "/play", description: "Play the preview" },
   { name: "/pause", usage: "/pause", description: "Pause the preview" },
   { name: "/clear", usage: "/clear", description: "Clear visible chat" },
+  { name: "/chat", usage: "/chat", description: "Expand or minimize conversation focus" },
   { name: "/help", usage: "/help", description: "Show controls" },
   { name: "/quit", usage: "/quit", description: "Exit DumbEditor" },
 ];

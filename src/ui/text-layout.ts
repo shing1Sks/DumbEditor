@@ -19,13 +19,21 @@ export function chatViewport(
   width: number,
   height: number,
   scrollRows: number,
-): { lines: ChatLine[]; maxScroll: number } {
+): { lines: ChatLine[]; maxScroll: number; totalRows: number; startRow: number; endRow: number; scrollRows: number } {
   const rows = messages.flatMap((message) => wrapMessage(message, assistantLabel, Math.max(12, width)));
   const visibleHeight = Math.max(1, height);
   const maxScroll = Math.max(0, rows.length - visibleHeight);
   const offset = Math.max(0, Math.min(maxScroll, scrollRows));
   const end = rows.length - offset;
-  return { lines: rows.slice(Math.max(0, end - visibleHeight), end), maxScroll };
+  const start = Math.max(0, end - visibleHeight);
+  return {
+    lines: rows.slice(start, end),
+    maxScroll,
+    totalRows: rows.length,
+    startRow: start,
+    endRow: end,
+    scrollRows: offset,
+  };
 }
 
 export function inputViewport(value: string, cursor: number, width: number, maxRows = 4): { lines: InputLine[]; rows: number; capacity: number } {

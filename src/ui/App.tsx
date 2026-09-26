@@ -21,6 +21,7 @@ import { DEFAULT_SETTINGS, OPENAI_SLOTS, OPENROUTER_SLOTS, readSettings, setAgen
 import { formatTime } from "../core/time.js";
 import { EMPTY_USAGE_SUMMARY, formatUsd, type UsageSummary } from "../core/usage.js";
 import { AssetPanel } from "./AssetPanel.js";
+import { ChatPanel } from "./ChatPanel.js";
 import { ApprovalPanel } from "./ApprovalPanel.js";
 import { ChoicePanel, type ChoicePanelState } from "./ChoicePanel.js";
 import { Help } from "./Help.js";
@@ -33,6 +34,7 @@ import { MusicPanel } from "./MusicPanel.js";
 import { AssetsSidebar, ProjectSidebar } from "./Sidebars.js";
 import { Timeline } from "./Timeline.js";
 import { chatViewport, inputViewport, moveInputCursorVertically } from "./text-layout.js";
+import { clearRetainedTerminalLayer } from "./terminal-layers.js";
 import { activePreviewBackend, VideoSurface } from "./VideoSurface.js";
 
 type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | "approval" | "choice" | null;
@@ -57,6 +59,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatScrollRows, setChatScrollRows] = useState(0);
+  const [chatFocused, setChatFocused] = useState(false);
   const [loader, setLoader] = useState<LoaderState | null>(null);
   const [status, setStatus] = useState("Ready");
   const [assets, setAssets] = useState<AgentAsset[]>([]);
@@ -71,7 +74,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   const choiceResolver = useRef<((answer: string | null) => void) | null>(null);
   const [previewRefresh, setPreviewRefresh] = useState(0);
   const assetPreview = useRef<ChildProcess | null>(null);
-  const [overlay, setOverlay] = useState<Overlay>(null);
+  const [overlay, setOverlayState] = useState<Overlay>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [settings, setSettings] = useState<DumbEditorSettings>(() => structuredClone(DEFAULT_SETTINGS));
   const [settingsReady, setSettingsReady] = useState(false);
@@ -87,6 +90,14 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [exportPanel, setExportPanel] = useState<ExportPanelState>(() => ({ destination: "", cursor: 0, format: "mp4", preset: "balanced", focus: "path" }));
   const didOpenInitialPath = useRef(false);
 
+  const setOverlay = useCallback((next: Overlay) => {
+    if (next) {
+      clearRetainedTerminalLayer();
+      setChatFocused(false);
+    }
+    setOverlayState(next);
+  }, []);
+
   const busy = loader !== null;
   const previewBackend = useMemo(() => activePreviewBackend(), []);
   const inputMetrics = useMemo(() => inputViewport(input, inputCursor, Math.max(8, terminal.columns - 6)), [input, inputCursor, terminal.columns]);
@@ -96,8 +107,20 @@ export function App({ initialPath }: { initialPath?: string }) {
   const currentFile = project?.current.filePath;
   const agentModel = settingsReady ? settings.models.openai.text : "editor model";
   const controlsHint = terminal.columns >= 120
-    ? `${previewBackend.toUpperCase()} · Ctrl+P play · ←/→ 5s · PgUp/PgDn chat · / commands`
-    : "Ctrl+P play · PgUp/PgDn chat · / commands";
+    ? `${previewBackend.toUpperCase()} · Ctrl+P play · ←/→ 5s · +/- volume · ↑/↓ chat · Ctrl+G focus`
+    : "Ctrl+P play · +/- volume · ↑/↓ chat · Ctrl+G focus";
+  const focusedConversationRows = layout.playerRows + layout.chatRows + 2;
+  const visibleConversationRows = chatFocused ? focusedConversationRows : layout.chatRows;
+  const chatPageRows = Math.max(1, visibleConversationRows - 2);
+
+  const toggleChatFocus = useCallback(() => {
+    setPlaying(false);
+    setOverlay(null);
+    setChatFocused((current) => {
+      if (!current) clearRetainedTerminalLayer();
+      return !current;
+    });
+  }, [setOverlay]);
 
   useEffect(() => { setSuggestionIndex(0); }, [input]);
   useEffect(() => { setChatScrollRows(0); }, [messages.length]);
@@ -373,6 +396,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/quit" || command === "/exit") { exit(); return; }
     if (command === "/help") { setOverlay("help"); return; }
     if (command === "/clear") { setMessages([]); setOverlay(null); return; }
+    if (command === "/chat") { toggleChatFocus(); return; }
     if (command === "/play") { if (media) setPlaying(true); return; }
     if (command === "/pause") { setCurrentTime(currentTimeRef.current); setPlaying(false); return; }
     if (command === "/open") { if (!argument) { await answer("Usage: /open <VIDEO PATH>"); return; } await openVideo(argument); return; }
@@ -427,7 +451,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/revert") { if (!argument) { await answer("Usage: /revert <VERSION>"); return; } await changeVersion(argument); return; }
     if (command === "/export") { openExportPanel(argument); return; }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openVideo, project, selection, settings.agent.claudeModel, settings.agent.permissionMode]);
+  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openVideo, project, selection, settings.agent.claudeModel, settings.agent.permissionMode, toggleChatFocus]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -682,9 +706,15 @@ export function App({ initialPath }: { initialPath?: string }) {
       }
       return;
     }
-    if (key.escape) { if (overlay) setOverlay(null); else { setInput(""); setInputCursor(0); } return; }
-    if (key.pageUp) { setChatScrollRows((value) => value + Math.max(1, layout.chatRows - 1)); return; }
-    if (key.pageDown) { setChatScrollRows((value) => Math.max(0, value - Math.max(1, layout.chatRows - 1))); return; }
+    if (key.ctrl && character.toLowerCase() === "g") { toggleChatFocus(); return; }
+    if (key.escape) {
+      if (overlay) setOverlay(null);
+      else if (chatFocused) setChatFocused(false);
+      else { setInput(""); setInputCursor(0); }
+      return;
+    }
+    if (key.pageUp) { setChatScrollRows((value) => value + chatPageRows); return; }
+    if (key.pageDown) { setChatScrollRows((value) => Math.max(0, value - chatPageRows)); return; }
     if (busy) return;
     if (key.shift && character.toLowerCase() === "a") {
       openAssetBrowser();
@@ -705,16 +735,18 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (key.upArrow) {
       if (suggestions.length > 0) setSuggestionIndex((value) => (value - 1 + suggestions.length) % suggestions.length);
       else if (input.length > 0) setInputCursor((value) => moveInputCursorVertically(input, value, inputMetrics.capacity, -1));
-      else setVolume((value) => Math.min(100, value + 5));
+      else setChatScrollRows((value) => value + 1);
       return;
     }
     if (key.downArrow) {
       if (suggestions.length > 0) setSuggestionIndex((value) => (value + 1) % suggestions.length);
       else if (input.length > 0) setInputCursor((value) => moveInputCursorVertically(input, value, inputMetrics.capacity, 1));
-      else setVolume((value) => Math.max(0, value - 5));
+      else setChatScrollRows((value) => Math.max(0, value - 1));
       return;
     }
     if (key.ctrl && character === "p") { if (media) { if (playing) setCurrentTime(currentTimeRef.current); setPlaying((value) => !value); } return; }
+    if (input.length === 0 && (character === "+" || character === "=")) { setVolume((value) => Math.min(100, value + 5)); return; }
+    if (input.length === 0 && character === "-") { setVolume((value) => Math.max(0, value - 5)); return; }
     if (character === "[" && input.length === 0) { setSelection((value) => ({ ...value, in: currentTimeRef.current })); return; }
     if (character === "]" && input.length === 0) { setSelection((value) => ({ ...value, out: currentTimeRef.current })); return; }
     if (character && !key.ctrl && !key.meta && !key.tab) {
@@ -724,21 +756,38 @@ export function App({ initialPath }: { initialPath?: string }) {
   });
 
   const chatView = useMemo(
-    () => chatViewport(messages, agentModel, Math.max(16, terminal.columns - 2), layout.chatRows, chatScrollRows),
-    [agentModel, chatScrollRows, layout.chatRows, messages, terminal.columns],
+    () => chatViewport(messages, agentModel, Math.max(16, terminal.columns - 3), Math.max(1, visibleConversationRows - 1), chatScrollRows),
+    [agentModel, chatScrollRows, messages, terminal.columns, visibleConversationRows],
   );
+  useEffect(() => {
+    if (chatScrollRows > chatView.maxScroll) setChatScrollRows(chatView.maxScroll);
+  }, [chatScrollRows, chatView.maxScroll]);
   const versions = useMemo(() => project?.history(showAllHistory ? project.snapshot.versions.length : 8) ?? [], [project, revision, showAllHistory]);
   const sidebarVersions = useMemo(() => project?.history(Number.POSITIVE_INFINITY) ?? [], [project, revision]);
-  const suggestionCapacity = Math.max(1, layout.chatRows);
+  const suggestionCapacity = Math.max(1, visibleConversationRows - 1);
   const suggestionStart = Math.min(
     Math.max(0, suggestionIndex - suggestionCapacity + 1),
     Math.max(0, suggestions.length - suggestionCapacity),
   );
   const visibleSuggestions = suggestions.slice(suggestionStart, suggestionStart + suggestionCapacity);
+  const conversationPanel = suggestions.length > 0 ? (
+    <Box flexDirection="column" height={visibleConversationRows} minHeight={visibleConversationRows} overflow="hidden">
+      <Box height={1} minHeight={1} justifyContent="space-between">
+        <Text bold color="cyan">Commands</Text>
+        <Text dimColor>{suggestionStart + 1}-{suggestionStart + visibleSuggestions.length} / {suggestions.length} · ↑/↓ select · Tab complete</Text>
+      </Box>
+      {visibleSuggestions.map((command, offset) => (
+        <Text key={command.name} {...(suggestionStart + offset === suggestionIndex ? { color: "cyan" as const, inverse: true } : {})} wrap="truncate-end">
+          {suggestionStart + offset === suggestionIndex ? "› " : "  "}{command.usage}  <Text dimColor>{command.description}</Text>
+        </Text>
+      ))}
+    </Box>
+  ) : <ChatPanel {...chatView} height={visibleConversationRows} width={terminal.columns - 2} focused={chatFocused} />;
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between"><Text bold color="magenta">DumbEditor</Text><Text dimColor>{project ? `${basename(project.snapshot.sourcePath)} · ${project.current.id}` : "No video"}</Text></Box>
-      <Box height={layout.playerRows} minHeight={layout.playerRows} flexDirection="row">
+      {chatFocused ? conversationPanel : <>
+        <Box height={layout.playerRows} minHeight={layout.playerRows} flexDirection="row">
         {overlay === "help" ? <Help model={agentModel} /> : overlay === "history" && project ? <History versions={versions} currentId={project.current.id} />
           : overlay === "model" ? modelOverlayReady
             ? <ModelPanel picker={modelPicker} settings={settings} keys={providerKeyStatus()}
@@ -760,29 +809,26 @@ export function App({ initialPath }: { initialPath?: string }) {
               width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
               columns={layout.videoColumns} rows={layout.playerRows} topRow={2} leftColumn={2 + layout.leftSidebarColumns}
-              timelineColumns={terminal.columns} selection={selection}
+              timelineColumns={layout.videoColumns} timelineLeftColumn={2 + layout.leftSidebarColumns} selection={selection}
               repaintKey={previewRefresh}
               onTime={updatePreviewTime} onEnd={handlePreviewEnd} onError={handlePreviewError} />
             {layout.rightSidebarColumns > 0 && <AssetsSidebar assets={assets} usage={usage}
               width={layout.rightSidebarColumns} height={layout.playerRows} />}
           </>}
-      </Box>
-      <Box height={1} minHeight={1}>{media ? <Timeline current={currentTime} duration={media.duration} selection={selection} width={terminal.columns} /> : <Text> </Text>}</Box>
-      <Box height={1} minHeight={1} justifyContent="space-between">
-        <Text dimColor wrap="truncate-end">{playing ? "▶ playing" : "Ⅱ paused"} · volume {volume}%{selection.in !== null ? ` · in ${formatTime(selection.in)}` : ""}{selection.out !== null ? ` · out ${formatTime(selection.out)}` : ""}</Text>
-        <Text dimColor wrap="truncate-end">{controlsHint}</Text>
-      </Box>
-      <Box flexDirection="column" height={layout.chatRows} minHeight={layout.chatRows} overflow="hidden">
-        {suggestions.length > 0 ? visibleSuggestions.map((command, offset) => (
-          <Text key={command.name} {...(suggestionStart + offset === suggestionIndex ? { color: "cyan" as const, inverse: true } : {})} wrap="truncate-end">
-            {suggestionStart + offset === suggestionIndex ? "› " : "  "}{command.usage}  <Text dimColor>{command.description}</Text>
-          </Text>
-        )) : chatView.lines.map((line, index) => (
-          <Text key={`${index}-${line.prefix}-${line.text}`} wrap="truncate-end">
-            <Text color={line.role === "user" ? "cyan" : "magenta"}>{line.prefix}</Text>{line.text}
-          </Text>
-        ))}
-      </Box>
+        </Box>
+        <Box height={1} minHeight={1} flexDirection="row">
+          {layout.leftSidebarColumns > 0 && <Box width={layout.leftSidebarColumns} />}
+          <Box width={layout.videoColumns} justifyContent="center">
+            {media ? <Timeline current={currentTime} duration={media.duration} selection={selection} width={layout.videoColumns} /> : <Text> </Text>}
+          </Box>
+          {layout.rightSidebarColumns > 0 && <Box width={layout.rightSidebarColumns} />}
+        </Box>
+        <Box height={1} minHeight={1} justifyContent="space-between">
+          <Text dimColor wrap="truncate-end">{playing ? "▶ playing" : "Ⅱ paused"} · volume {volume}%{selection.in !== null ? ` · in ${formatTime(selection.in)}` : ""}{selection.out !== null ? ` · out ${formatTime(selection.out)}` : ""}</Text>
+          <Text dimColor wrap="truncate-end">{controlsHint}</Text>
+        </Box>
+        {conversationPanel}
+      </>}
       {loader ? <Box height={3} minHeight={3} borderStyle="round" borderColor="yellow" paddingX={1} overflow="hidden">
           <Text color={loader.source === "Sandbox" ? "cyan" : "yellow"} wrap="truncate-end">{LOADER_MARK} {loader.source === "Sandbox" ? "⬡ SANDBOX" : loader.source} · {loader.stage}</Text>
         </Box>

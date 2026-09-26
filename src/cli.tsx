@@ -7,6 +7,7 @@ import { loadEnvironment, runSetup } from "./core/config.js";
 import { ProjectStore } from "./core/project.js";
 import { markWelcomeShown } from "./core/settings.js";
 import { App } from "./ui/App.js";
+import { createLayeredStdout } from "./ui/terminal-layers.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnvironment(packageRoot);
@@ -84,7 +85,10 @@ const restoreScreen = () => {
 };
 
 if (useAlternateScreen) process.stdout.write("\u001B[?1049h\u001B[2J\u001B[H\u001B[?25l");
-const app = render(<App initialPath={initialPath} />, { exitOnCtrlC: false });
+const app = render(<App initialPath={initialPath} />, {
+  exitOnCtrlC: false,
+  stdout: createLayeredStdout(process.stdout),
+});
 process.once("exit", restoreScreen);
 try {
   await app.waitUntilExit();
@@ -137,12 +141,14 @@ Usage:
 Controls:
   Ctrl+P         Play or pause
   Left / Right   Seek 5 seconds
-  Up / Down      Preview volume, or navigate command suggestions
-  PageUp/PageDown Scroll the bounded chat history
+  Up / Down      Scroll chat, navigate suggestions, or move in multiline input
+  PageUp/PageDown Scroll chat by a page
+  + / -          Raise or lower preview volume
+  Ctrl+G         Expand or minimize conversation focus
   [ / ]          Mark selection in / out
   Tab            Complete the selected slash command
   Enter          Send a request or complete a slash command
-  Esc            Close a panel or clear the input
+  Esc            Minimize chat, close a panel, or clear the input
   Ctrl+C         Quit
   Shift+A        Open or close the project asset browser
 
@@ -167,6 +173,7 @@ Editor commands:
   /play              Play the preview
   /pause             Pause the preview
   /clear             Clear visible chat
+  /chat              Expand or minimize conversation focus
   /help              Show help in the editor
   /quit              Exit
 

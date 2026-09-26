@@ -9,8 +9,11 @@ test("wraps chat by terminal rows and keeps model labels consistent", () => {
   ];
   const view = chatViewport(messages, "gpt-6-sol", 28, 3, 0);
   assert.equal(view.lines.length, 3);
+  assert.equal(view.endRow, view.totalRows);
+  assert.equal(view.scrollRows, 0);
   assert.equal(view.lines.some((line) => line.prefix.startsWith("gpt-6-sol")), false);
   const older = chatViewport(messages, "gpt-6-sol", 28, 3, view.maxScroll);
+  assert.equal(older.startRow, 0);
   assert.equal(older.lines[0]?.prefix, "gpt-6-sol › ");
   assert.equal(older.lines.some((line) => line.text.includes("**")), false);
 });

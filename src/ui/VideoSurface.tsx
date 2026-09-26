@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
 import type { MediaInfo, Selection } from "../types.js";
 import {
   detectPreviewBackend,
@@ -11,6 +11,7 @@ import {
   type PreviewSize,
 } from "../core/media.js";
 import { formatTime } from "../core/time.js";
+import { clearRetainedTerminalLayer, retainTerminalLayer, writeTerminalLayer } from "./terminal-layers.js";
 
 interface PendingFrame {
   buffer: Buffer;
@@ -27,13 +28,13 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
   topRow?: number;
   leftColumn?: number;
   timelineColumns?: number;
+  timelineLeftColumn?: number;
   repaintKey?: number;
   selection: Selection;
   onTime: (time: number, force: boolean) => void;
   onEnd: () => void;
   onError: (error: Error) => void;
 }) {
-  const { stdout } = useStdout();
   const backend = useMemo(() => detectPreviewBackend(), []);
   const size = useMemo(
     () => props.media
@@ -51,16 +52,20 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
   });
   layoutRef.current = { backend, columns: props.columns, rows: props.rows, size, topRow: props.topRow ?? 2, leftColumn: props.leftColumn ?? 1 };
   const lastFrame = useRef("");
+  const imageLayer = useRef("");
+  const timelineLayer = useRef("");
   const lastTime = useRef(props.time);
   const lastTimelinePaint = useRef(0);
   const timelineRef = useRef({
     columns: props.timelineColumns ?? props.columns,
+    leftColumn: props.timelineLeftColumn ?? props.leftColumn ?? 1,
     duration: props.media?.duration ?? 0,
     row: (props.topRow ?? 2) + props.rows,
     selection: props.selection,
   });
   timelineRef.current = {
     columns: props.timelineColumns ?? props.columns,
+    leftColumn: props.timelineLeftColumn ?? props.leftColumn ?? 1,
     duration: props.media?.duration ?? 0,
     row: (props.topRow ?? 2) + props.rows,
     selection: props.selection,
@@ -69,7 +74,13 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
   const drawing = useRef(false);
   const mounted = useRef(true);
 
-  const drawEncoded = (encoded: string) => {
+  const commitLayers = () => {
+    const output = `${imageLayer.current}${timelineLayer.current}`;
+    retainTerminalLayer(output);
+    writeTerminalLayer(output);
+  };
+
+  const stageEncoded = (encoded: string) => {
     if (!mounted.current || !encoded) return;
     const layout = layoutRef.current;
     const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
@@ -87,7 +98,7 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
       }
     }
     output += "\u001B8";
-    stdout.write(output);
+    imageLayer.current = output;
   };
 
   const queueFrame = (buffer: Buffer, time: number) => {
@@ -107,12 +118,13 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
           const encoded = encodePreviewFrame(pending.buffer, layout.size, layout.backend);
           lastFrame.current = encoded;
           lastTime.current = pending.time;
-          drawEncoded(encoded);
+          stageEncoded(encoded);
           props.onTime(pending.time, false);
           if (pending.time - lastTimelinePaint.current >= 0.1 || pending.time < lastTimelinePaint.current) {
             lastTimelinePaint.current = pending.time;
-            drawTimeline(stdout, timelineRef.current, pending.time);
+            timelineLayer.current = timelineOutput(timelineRef.current, pending.time);
           }
+          commitLayers();
         } catch (error) {
           props.onError(error instanceof Error ? error : new Error(String(error)));
         }
@@ -124,14 +136,19 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+      clearRetainedTerminalLayer();
+    };
   }, []);
 
   useEffect(() => {
-    clearSurface(stdout, layoutRef.current.topRow, layoutRef.current.rows, layoutRef.current.leftColumn, layoutRef.current.columns);
+    clearSurface(layoutRef.current.topRow, layoutRef.current.rows, layoutRef.current.leftColumn, layoutRef.current.columns);
     lastFrame.current = "";
-    return () => clearSurface(stdout, layoutRef.current.topRow, layoutRef.current.rows, layoutRef.current.leftColumn, layoutRef.current.columns);
-  }, [backend, props.columns, props.leftColumn, props.rows, size.height, size.width, stdout]);
+    imageLayer.current = "";
+    timelineLayer.current = "";
+    clearRetainedTerminalLayer();
+  }, [backend, props.columns, props.leftColumn, props.rows, size.height, size.width]);
 
   useEffect(() => {
     if (!props.filePath || !props.media || size.width === 0 || size.height === 0) return;
@@ -173,24 +190,14 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
     };
   }, [backend, props.filePath, props.media, props.playing, props.playing ? null : props.time, size.height, size.width]);
 
-  // Ink can repaint its reserved blank rows when chat/input changes. Restore the
-  // most recent image after that commit without feeding frames through React.
-  useEffect(() => {
-    if (!lastFrame.current) return;
-    const timer = setTimeout(() => {
-      drawEncoded(lastFrame.current);
-      drawTimeline(stdout, timelineRef.current, lastTime.current);
-    }, 0);
-    return () => clearTimeout(timer);
-  });
-
   // Windows Terminal can discard Sixel graphics when a tab regains focus.
   // Focus reporting in App increments this key so the retained frame is restored
   // without extracting it again or repainting the React layout.
   useEffect(() => {
     if (!lastFrame.current) return;
-    drawEncoded(lastFrame.current);
-    drawTimeline(stdout, timelineRef.current, lastTime.current);
+    stageEncoded(lastFrame.current);
+    timelineLayer.current = timelineOutput(timelineRef.current, lastTime.current);
+    commitLayers();
   }, [props.repaintKey]);
 
   return (
@@ -204,12 +211,12 @@ export function activePreviewBackend(): PreviewBackend {
   return detectPreviewBackend();
 }
 
-function clearSurface(stdout: NodeJS.WriteStream, topRow: number, rows: number, leftColumn: number, columns: number): void {
+function clearSurface(topRow: number, rows: number, leftColumn: number, columns: number): void {
   let output = "\u001B7";
   const blank = " ".repeat(Math.max(0, columns));
   for (let index = 0; index < rows; index += 1) output += `\u001B[${topRow + index};${leftColumn}H${blank}`;
   output += "\u001B8";
-  stdout.write(output);
+  writeTerminalLayer(output);
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {
@@ -217,12 +224,11 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function drawTimeline(
-  stdout: NodeJS.WriteStream,
-  layout: { columns: number; duration: number; row: number; selection: Selection },
+function timelineOutput(
+  layout: { columns: number; leftColumn: number; duration: number; row: number; selection: Selection },
   current: number,
-): void {
-  if (layout.duration <= 0) return;
+): string {
+  if (layout.duration <= 0) return "";
   const length = Math.max(18, Math.min(90, layout.columns - 24));
   const cursor = timelinePosition(current, layout.duration, length);
   const inPoint = layout.selection.in === null ? -1 : timelinePosition(layout.selection.in, layout.duration, length);
@@ -235,8 +241,10 @@ function drawTimeline(
     else if (index < cursor) bar += "━";
     else bar += "─";
   }
+  const plainWidth = formatTime(current).length + bar.length + formatTime(layout.duration).length + 2;
+  const column = layout.leftColumn + Math.max(0, Math.floor((layout.columns - plainWidth) / 2));
   const line = `\u001B[36m${formatTime(current)}\u001B[0m ${bar} \u001B[90m${formatTime(layout.duration)}\u001B[0m`;
-  stdout.write(`\u001B7\u001B[${layout.row};2H\u001B[2K${line}\u001B8`);
+  return `\u001B7\u001B[${layout.row};${layout.leftColumn}H${" ".repeat(layout.columns)}\u001B[${layout.row};${column}H${line}\u001B8`;
 }
 
 function timelinePosition(value: number, duration: number, width: number): number {

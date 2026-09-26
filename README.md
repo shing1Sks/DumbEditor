@@ -118,6 +118,7 @@ Type `/` to open the scrollable command menu. Use Up and Down to choose, then Ta
 /play
 /pause
 /clear
+/chat
 /help
 /quit
 ```
@@ -162,12 +163,14 @@ After selection, ask the editor agent to use the selected background music. It d
 | `Ctrl+P` | Play or pause the main video |
 | `Space` | Type a space; preview or stop a track while the music or asset popup is active |
 | Left / Right | Seek five seconds; go back or choose in a popup |
-| Up / Down | Change volume or move through lists |
+| Up / Down | Scroll chat one row, move through lists, or move within multiline input |
+| `+` / `-` | Raise or lower preview volume |
 | `[` / `]` | Set in and out marks |
 | `Tab` | Complete a command or move through a popup |
 | `Enter` | Send, complete, or select |
 | `PageUp` / `PageDown` | Scroll chat history without moving the input cursor |
-| `Esc` | Clear input or close a panel |
+| `Ctrl+G` | Expand chat over the player or return to the video |
+| `Esc` | Minimize expanded chat, clear input, or close a panel |
 | `Ctrl+C` | Quit and terminate preview processes |
 | `Shift+A` | Open or close the project asset browser |
 
@@ -179,7 +182,7 @@ The chat footer shows the configured editor model by name alongside its running 
 
 ## Preview backend
 
-DumbEditor chooses Sixel in Windows Terminal and terminals that advertise Sixel support. Frames are scaled with Lanczos and painted only inside the reserved player surface.
+DumbEditor chooses Sixel in Windows Terminal and terminals that advertise Sixel support. Frames are scaled with Lanczos and painted only inside the reserved player surface. The preview is retained and composited with text updates through synchronized terminal output, so typing, chat scrolling, and transport changes do not blank or flash the image.
 
 ```powershell
 $env:DUMBEDITOR_PREVIEW = "blocks"
