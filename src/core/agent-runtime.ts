@@ -44,8 +44,11 @@ export async function runEditorAgent(options: {
   if (last?.role === "user" && last.content === options.request) history.pop();
   const tools = createEditorAgentTools({ ...options, workspace, permissionMode: settings.agent.permissionMode,
     claudeModel: settings.agent.claudeModel, claudeMaxBudgetUsd: settings.agent.claudeMaxBudgetUsd, models: settings.models });
+  const agentProvider = settings.agent.provider;
+  const agentModel = settings.models[agentProvider].text;
   const result = await runLunaAgent({
-    model: settings.models.openai.text,
+    provider: agentProvider,
+    model: agentModel,
     request: options.request,
     media: options.media,
     currentVersionId: options.store.current.id,
@@ -59,11 +62,11 @@ export async function runEditorAgent(options: {
     onUsage: async (usage) => {
       await options.store.appendUsage({
         kind: "luna",
-        provider: "openai",
-        model: settings.models.openai.text,
+        provider: agentProvider,
+        model: agentModel,
         label: options.request.slice(0, 160),
         costUsd: usage.costUsd,
-        estimated: false,
+        estimated: usage.estimated,
         inputTokens: usage.inputTokens,
         cachedInputTokens: usage.cachedInputTokens,
         cacheWriteTokens: usage.cacheWriteTokens,

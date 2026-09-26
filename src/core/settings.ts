@@ -14,6 +14,7 @@ export interface DumbEditorSettings {
   schemaVersion: 1;
   welcomeShown: boolean;
   agent: {
+    provider: ModelProvider;
     permissionMode: AgentPermissionMode;
     claudeModel: string;
     claudeMaxBudgetUsd: number;
@@ -28,6 +29,7 @@ export const DEFAULT_SETTINGS: DumbEditorSettings = {
   schemaVersion: 1,
   welcomeShown: false,
   agent: {
+    provider: "openai",
     permissionMode: "ask",
     claudeModel: "claude-sonnet-4-6",
     claudeMaxBudgetUsd: 0.5,
@@ -82,6 +84,16 @@ export async function setDefaultModel(provider: ModelProvider, slot: ModelSlot, 
   return settings;
 }
 
+export async function setBaseAgentModel(provider: ModelProvider, model: string): Promise<DumbEditorSettings> {
+  const value = model.trim();
+  if (!value || value.length > 200 || /\s/.test(value)) throw new Error("Model IDs cannot be empty or contain spaces.");
+  const settings = await readSettings();
+  settings.models[provider].text = value;
+  settings.agent.provider = provider;
+  await writeSettings(settings);
+  return settings;
+}
+
 export async function setAgentPermissionMode(permissionMode: AgentPermissionMode): Promise<DumbEditorSettings> {
   const settings = await readSettings();
   settings.agent.permissionMode = permissionMode;
@@ -113,6 +125,7 @@ function normalizeSettings(raw: Partial<DumbEditorSettings>): DumbEditorSettings
     schemaVersion: 1,
     welcomeShown: raw.welcomeShown === true,
     agent: {
+      provider: raw.agent?.provider === "openrouter" ? "openrouter" : "openai",
       permissionMode: raw.agent?.permissionMode === "auto" ? "auto" : "ask",
       claudeModel: cleanModel(raw.agent?.claudeModel, DEFAULT_SETTINGS.agent.claudeModel),
       claudeMaxBudgetUsd: finiteBudget(raw.agent?.claudeMaxBudgetUsd, DEFAULT_SETTINGS.agent.claudeMaxBudgetUsd),

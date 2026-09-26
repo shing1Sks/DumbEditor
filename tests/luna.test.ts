@@ -148,3 +148,49 @@ test("Luna continues beyond the former reasoning round cap", async () => {
     else process.env.OPENAI_API_KEY = originalKey;
   }
 });
+
+test("runs the base editing agent through OpenRouter with reported cost", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.OPENROUTER_API_KEY;
+  const requests: Array<{ url: string; authorization: string | null; body: Record<string, unknown> }> = [];
+  process.env.OPENROUTER_API_KEY = "openrouter-test-key";
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      authorization: new Headers(init?.headers).get("authorization"),
+      body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+    });
+    return Response.json({
+      output: [{ type: "message", content: [{ type: "output_text", text: "Ready through OpenRouter." }] }],
+      usage: { input_tokens: 800, input_tokens_details: { cached_tokens: 200 }, output_tokens: 50, cost: 0.0123 },
+    });
+  }) as typeof fetch;
+  const usage: LunaUsage[] = [];
+  try {
+    const result = await runLunaAgent({
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-4.6",
+      request: "review this video",
+      media: { path: "video.mp4", duration: 5, width: 640, height: 360, fps: 30, hasAudio: true, formatName: "mp4" },
+      currentVersionId: "v0000",
+      currentTime: 0,
+      selection: { in: null, out: null },
+      history: [],
+      tools: [],
+      onUsage: async (item) => { usage.push(item); },
+    });
+    assert.equal(result.message, "Ready through OpenRouter.");
+    assert.equal(result.costUsd, 0.0123);
+    assert.equal(usage[0]?.estimated, false);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.url, "https://openrouter.ai/api/v1/responses");
+    assert.equal(requests[0]?.authorization, "Bearer openrouter-test-key");
+    assert.equal(requests[0]?.body.model, "anthropic/claude-sonnet-4.6");
+    assert.equal(requests[0]?.body.session_id !== undefined, true);
+    assert.equal(requests[0]?.body.context_management, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalKey;
+  }
+});

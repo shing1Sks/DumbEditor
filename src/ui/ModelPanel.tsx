@@ -1,12 +1,32 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { ProviderModel } from "../core/models.js";
-import { OPENAI_SLOTS, OPENROUTER_SLOTS, type DumbEditorSettings, type ModelProvider, type ModelSlot, type OpenAISlot, type OpenRouterSlot } from "../core/settings.js";
+import type { DumbEditorSettings, ModelProvider, ModelSlot, OpenAISlot, OpenRouterSlot } from "../core/settings.js";
 
-export type ModelPickerStep = "provider" | "slot" | "models";
+export type ModelCapability = "agent" | "image" | "audio" | "music" | "video" | "transcription" | "speech";
+export type ModelPickerStep = "capability" | "provider" | "models";
+
+interface CapabilityDefinition {
+  id: ModelCapability;
+  label: string;
+  detail: string;
+  slot: ModelSlot;
+  providers: ModelProvider[];
+}
+
+export const MODEL_CAPABILITIES: CapabilityDefinition[] = [
+  { id: "agent", label: "Base agent", detail: "plans edits and runs tools", slot: "text", providers: ["openai", "openrouter"] },
+  { id: "image", label: "Image", detail: "generated overlays and artwork", slot: "image", providers: ["openrouter"] },
+  { id: "audio", label: "Audio", detail: "generated sound and speech", slot: "audio", providers: ["openrouter"] },
+  { id: "music", label: "Music", detail: "generated background music", slot: "music", providers: ["openrouter"] },
+  { id: "video", label: "Video", detail: "generated clips", slot: "video", providers: ["openrouter"] },
+  { id: "transcription", label: "Transcription", detail: "speech to subtitles", slot: "transcription", providers: ["openai"] },
+  { id: "speech", label: "Speech", detail: "text to speech", slot: "speech", providers: ["openai"] },
+];
 
 export interface ModelPickerState {
   step: ModelPickerStep;
+  capability: ModelCapability;
   provider: ModelProvider | null;
   slot: ModelSlot;
   models: ProviderModel[];
@@ -18,7 +38,8 @@ export interface ModelPickerState {
 
 export function initialModelPicker(): ModelPickerState {
   return {
-    step: "provider",
+    step: "capability",
+    capability: "agent",
     provider: null,
     slot: "text",
     models: [],
@@ -27,6 +48,10 @@ export function initialModelPicker(): ModelPickerState {
     loading: false,
     error: null,
   };
+}
+
+export function capabilityDefinition(capability: ModelCapability): CapabilityDefinition {
+  return MODEL_CAPABILITIES.find((item) => item.id === capability) ?? MODEL_CAPABILITIES[0]!;
 }
 
 export function filteredPickerModels(picker: ModelPickerState): ProviderModel[] {
@@ -74,8 +99,8 @@ export function ModelPanel(props: {
     <Box width={props.width} height={props.height} alignItems="center" justifyContent="center">
       <Box width={modalWidth} height={modalHeight} flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2}>
         <Header picker={props.picker} />
+        {props.picker.step === "capability" && <CapabilityChoices picker={props.picker} settings={props.settings} />}
         {props.picker.step === "provider" && <ProviderChoices picker={props.picker} settings={props.settings} keys={props.keys} />}
-        {props.picker.step === "slot" && <SlotChoices picker={props.picker} settings={props.settings} />}
         {props.picker.step === "models" && <ModelChoices picker={props.picker} settings={props.settings} height={modalHeight - 5} width={modalWidth - 6} />}
         <Box flexGrow={1} />
         <Footer step={props.picker.step} />
@@ -85,12 +110,22 @@ export function ModelPanel(props: {
 }
 
 function Header({ picker }: { picker: ModelPickerState }) {
-  const path = picker.step === "provider"
-    ? "Provider"
-    : picker.step === "slot"
-      ? `${picker.provider === "openai" ? "OpenAI" : "OpenRouter"} / capability`
-      : `${picker.provider === "openai" ? "OpenAI" : "OpenRouter"} / ${picker.slot}`;
+  const capability = capabilityDefinition(picker.capability);
+  const path = picker.step === "capability"
+    ? "Capability"
+    : picker.step === "provider"
+      ? `${capability.label} / provider`
+      : `${capability.label} / ${providerName(picker.provider)}`;
   return <Text bold color="cyan">Select default model  <Text dimColor>{path}</Text></Text>;
+}
+
+function CapabilityChoices({ picker, settings }: { picker: ModelPickerState; settings: DumbEditorSettings }) {
+  return <Box flexDirection="column" marginTop={1}>
+    {MODEL_CAPABILITIES.map((capability, index) => (
+      <Choice key={capability.id} selected={index === picker.selectedIndex} primary={capability.label}
+        secondary={`${configuredCapability(settings, capability)} | ${capability.detail}`} />
+    ))}
+  </Box>;
 }
 
 function ProviderChoices(props: {
@@ -98,24 +133,14 @@ function ProviderChoices(props: {
   settings: DumbEditorSettings;
   keys: { openai: boolean; openrouter: boolean };
 }) {
-  const providers: Array<{ name: string; status: string; detail: string }> = [
-    { name: "OpenAI", status: props.keys.openai ? "configured" : "key missing", detail: "editor, transcription, speech" },
-    { name: "OpenRouter", status: props.keys.openrouter ? "configured" : "optional key missing", detail: "text, image, audio, music, video" },
-  ];
+  const capability = capabilityDefinition(props.picker.capability);
   return <Box flexDirection="column" marginTop={1}>
-    {providers.map((provider, index) => (
-      <Choice key={provider.name} selected={index === props.picker.selectedIndex}
-        primary={provider.name} secondary={`${provider.status} · ${provider.detail}`} />
-    ))}
-  </Box>;
-}
-
-function SlotChoices({ picker, settings }: { picker: ModelPickerState; settings: DumbEditorSettings }) {
-  const slots = picker.provider === "openai" ? OPENAI_SLOTS : OPENROUTER_SLOTS;
-  return <Box flexDirection="column" marginTop={1}>
-    {slots.map((slot, index) => (
-      <Choice key={slot} selected={index === picker.selectedIndex} primary={capitalize(slot)} secondary={configuredModel(settings, picker.provider, slot)} />
-    ))}
+    {capability.providers.map((provider, index) => {
+      const configured = configuredModel(props.settings, provider, capability.slot);
+      const active = props.picker.capability === "agent" && props.settings.agent.provider === provider;
+      return <Choice key={provider} selected={index === props.picker.selectedIndex} primary={providerName(provider)}
+        secondary={`${props.keys[provider] ? "configured" : "key missing"} | ${configured}${active ? " | active" : ""}`} />;
+    })}
   </Box>;
 }
 
@@ -127,11 +152,11 @@ function ModelChoices({ picker, settings, height, width }: { picker: ModelPicker
   const price = modelPricePresentation(picker.provider, picker.slot);
   return <Box flexDirection="column" marginTop={1}>
     <Box borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text color="cyan">Search › </Text><Text>{picker.query}</Text><Text inverse> </Text>
+      <Text color="cyan">Search &gt; </Text><Text>{picker.query}</Text><Text inverse> </Text>
     </Box>
-    {picker.loading ? <Text color="yellow">Loading provider catalog…</Text>
+    {picker.loading ? <Text color="yellow">Loading provider catalog...</Text>
       : picker.error ? <><Text color="yellow" wrap="truncate-end">{picker.error}</Text><Text dimColor>Press Enter to retry.</Text></>
-        : models.length === 0 ? <Text dimColor>No models match “{picker.query}”.</Text>
+        : models.length === 0 ? <Text dimColor>No models match "{picker.query}".</Text>
           : <>
             <ModelColumns width={width} first={price.first} second={price.second} />
             {models.slice(start, start + room).map((model, offset) => (
@@ -139,7 +164,7 @@ function ModelChoices({ picker, settings, height, width }: { picker: ModelPicker
                 selected={start + offset === picker.selectedIndex} width={width} />
             ))}
           </>}
-    {!picker.loading && !picker.error && <Text dimColor>{models.length} models{models.length > room ? ` · showing ${start + 1}-${Math.min(start + room, models.length)}` : ""}</Text>}
+    {!picker.loading && !picker.error && <Text dimColor>{models.length} models{models.length > room ? ` | showing ${start + 1}-${Math.min(start + room, models.length)}` : ""}</Text>}
     {!picker.loading && !picker.error && models.length > 0 && <Text dimColor>{price.note}</Text>}
   </Box>;
 }
@@ -156,8 +181,8 @@ function ModelChoice({ model, current, selected, width }: {
   width: number;
 }) {
   const columns = columnWidths(width);
-  const label = `${current ? "● " : ""}${model.name}${model.name === model.id ? "" : ` · ${model.id}`}`;
-  const row = `${selected ? "› " : "  "}${cell(label, columns.model)} ${cell(model.inputPrice ?? "—", columns.price)} ${cell(model.outputPrice ?? "—", columns.price)}`;
+  const label = `${current ? "* " : ""}${model.name}${model.name === model.id ? "" : ` | ${model.id}`}`;
+  const row = `${selected ? "> " : "  "}${cell(label, columns.model)} ${cell(model.inputPrice ?? "-", columns.price)} ${cell(model.outputPrice ?? "-", columns.price)}`;
   return <Text {...(selected ? { color: "black" as const, backgroundColor: "cyan" as const } : {})}>{row}</Text>;
 }
 
@@ -167,25 +192,34 @@ function columnWidths(width: number): { model: number; price: number } {
 }
 
 function cell(value: string, width: number): string {
-  if (value.length > width) return width <= 1 ? value.slice(0, width) : `${value.slice(0, width - 1)}…`;
+  if (value.length > width) return width <= 1 ? value.slice(0, width) : `${value.slice(0, width - 3)}...`;
   return value.padEnd(width);
 }
 
 function Choice({ selected, primary, secondary }: { selected: boolean; primary: string; secondary: string }) {
   return <Text {...(selected ? { color: "black" as const, backgroundColor: "cyan" as const } : {})} wrap="truncate-end">
-    {selected ? "› " : "  "}{primary}  <Text dimColor={!selected}>{secondary}</Text>
+    {selected ? "> " : "  "}{primary}  <Text dimColor={!selected}>{secondary}</Text>
   </Text>;
 }
 
 function Footer({ step }: { step: ModelPickerStep }) {
-  return <Text dimColor>↑/↓/Tab move · Enter {step === "models" ? "select" : "open"}{step === "models" ? " · type to search · Backspace edits" : ""} · Esc {step === "provider" ? "close" : "back"}</Text>;
+  return <Text dimColor>Up/Down/Tab move | Enter {step === "models" ? "select" : "open"}{step === "models" ? " | type to search | Backspace edits" : ""} | Esc {step === "capability" ? "close" : "back"}</Text>;
 }
 
-function capitalize(value: string): string {
-  return value[0]?.toUpperCase() + value.slice(1);
+function configuredCapability(settings: DumbEditorSettings, capability: CapabilityDefinition): string {
+  if (capability.id === "agent") {
+    return `${providerName(settings.agent.provider)} | ${settings.models[settings.agent.provider].text}`;
+  }
+  const provider = capability.providers[0]!;
+  return `${providerName(provider)} | ${configuredModel(settings, provider, capability.slot)}`;
 }
 
 function configuredModel(settings: DumbEditorSettings, provider: ModelProvider | null, slot: ModelSlot): string {
   if (provider === "openai") return settings.models.openai[slot as OpenAISlot] ?? "";
-  return settings.models.openrouter[slot as OpenRouterSlot] ?? "";
+  if (provider === "openrouter") return settings.models.openrouter[slot as OpenRouterSlot] ?? "";
+  return "";
+}
+
+function providerName(provider: ModelProvider | null): string {
+  return provider === "openrouter" ? "OpenRouter" : "OpenAI";
 }

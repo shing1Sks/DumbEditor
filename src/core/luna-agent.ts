@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ChatMessage, MediaInfo, Selection } from "../types.js";
+import type { ModelProvider } from "./settings.js";
 
 export interface AgentToolResult {
   ok: boolean;
@@ -32,6 +33,7 @@ export interface LunaUsage {
   cacheWriteTokens: number;
   outputTokens: number;
   costUsd: number;
+  estimated: boolean;
 }
 
 interface FunctionCallItem {
@@ -55,12 +57,14 @@ interface ResponsePayload {
     input_tokens?: number;
     input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
     output_tokens?: number;
+    cost?: number;
   };
 }
 
 type InputItem = Record<string, unknown>;
 
 export async function runLunaAgent(options: {
+  provider?: ModelProvider;
   model: string;
   request: string;
   media: MediaInfo;
@@ -74,8 +78,10 @@ export async function runLunaAgent(options: {
   onLedger?: (direction: "response" | "tool", items: unknown[]) => Promise<void>;
   onUsage?: (usage: LunaUsage) => Promise<void>;
 }): Promise<LunaAgentResult> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("OpenAI API key is missing. Run dumbeditor setup.");
+  const provider = options.provider ?? "openai";
+  const apiKey = (provider === "openrouter" ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY)?.trim();
+  const providerName = provider === "openrouter" ? "OpenRouter" : "OpenAI";
+  if (!apiKey) throw new Error(`${providerName} API key is missing. Run dumbeditor setup.`);
   const request = options.request.trim();
   if (!request) throw new Error("Agent request cannot be empty.");
   const runId = randomUUID();
@@ -89,15 +95,17 @@ export async function runLunaAgent(options: {
   let round = 0;
   while (true) {
     options.onStage?.(round === 0 ? "planning the edit" : "reviewing tool results");
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch(provider === "openrouter" ? "https://openrouter.ai/api/v1/responses" : "https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: options.model,
         reasoning: { effort: "medium" },
         store: false,
-        include: ["reasoning.encrypted_content"],
-        context_management: [{ type: "compaction", compact_threshold: 800_000 }],
+        ...(provider === "openai" ? {
+          include: ["reasoning.encrypted_content"],
+          context_management: [{ type: "compaction", compact_threshold: 800_000 }],
+        } : { session_id: runId }),
         parallel_tool_calls: false,
         tool_choice: "auto",
         instructions: agentInstructions(runId, options.model),
@@ -113,9 +121,12 @@ export async function runLunaAgent(options: {
       ...(options.signal ? { signal: options.signal } : {}),
     });
     const payload = await response.json().catch(() => ({})) as ResponsePayload;
-    if (!response.ok) throw new Error(`OpenAI agent request failed: ${payload.error?.message ?? `HTTP ${response.status}`}`);
+    if (!response.ok) throw new Error(`${providerName} agent request failed: ${payload.error?.message ?? `HTTP ${response.status}`}`);
     if (payload.usage) {
-      const usage = calculateLunaUsage(payload.usage, options.model);
+      const reportedCost = provider === "openrouter"
+        ? await openRouterResponseCost(payload, response, apiKey, options.signal)
+        : undefined;
+      const usage = calculateLunaUsage(payload.usage, options.model, provider, reportedCost);
       costUsd += usage.costUsd;
       await options.onUsage?.(usage);
     }
@@ -161,7 +172,12 @@ export async function runLunaAgent(options: {
   }
 }
 
-export function calculateLunaUsage(usage: NonNullable<ResponsePayload["usage"]>, model = "gpt-6-luna"): LunaUsage {
+export function calculateLunaUsage(
+  usage: NonNullable<ResponsePayload["usage"]>,
+  model = "gpt-6-luna",
+  provider: ModelProvider = "openai",
+  reportedCost?: number,
+): LunaUsage {
   const inputTokens = positive(usage.input_tokens);
   const cachedInputTokens = Math.min(inputTokens, positive(usage.input_tokens_details?.cached_tokens));
   const cacheWriteTokens = Math.min(inputTokens - cachedInputTokens, positive(usage.input_tokens_details?.cache_write_tokens));
@@ -172,13 +188,44 @@ export function calculateLunaUsage(usage: NonNullable<ResponsePayload["usage"]>,
   const perMillion = longContext
     ? { input: base.input * 2, cached: base.cached * 2, cacheWrite: base.cacheWrite * 2, output: base.output * 1.5 }
     : base;
-  const costUsd = (
+  const estimatedCostUsd = (
     ordinaryInputTokens * perMillion.input
     + cachedInputTokens * perMillion.cached
     + cacheWriteTokens * perMillion.cacheWrite
     + outputTokens * perMillion.output
   ) / 1_000_000;
-  return { inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, costUsd };
+  const hasReportedCost = provider === "openrouter" && Number.isFinite(reportedCost) && Number(reportedCost) >= 0;
+  return {
+    inputTokens,
+    cachedInputTokens,
+    cacheWriteTokens,
+    outputTokens,
+    costUsd: hasReportedCost ? Number(reportedCost) : estimatedCostUsd,
+    estimated: provider === "openrouter" && !hasReportedCost,
+  };
+}
+
+async function openRouterResponseCost(
+  payload: ResponsePayload,
+  response: Response,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<number | undefined> {
+  if (Number.isFinite(payload.usage?.cost) && Number(payload.usage?.cost) >= 0) return Number(payload.usage?.cost);
+  const generationId = response.headers.get("x-generation-id")?.trim();
+  if (!generationId) return undefined;
+  try {
+    const metadataResponse = await fetch(`https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(generationId)}`, {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      ...(signal ? { signal } : {}),
+    });
+    if (!metadataResponse.ok) return undefined;
+    const metadata = await metadataResponse.json().catch(() => ({})) as { data?: { total_cost?: number; usage?: number } };
+    const cost = metadata.data?.total_cost ?? metadata.data?.usage;
+    return Number.isFinite(cost) && Number(cost) >= 0 ? Number(cost) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function modelPrices(model: string): { input: number; cached: number; cacheWrite: number; output: number } {

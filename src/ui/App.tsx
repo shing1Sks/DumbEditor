@@ -17,7 +17,7 @@ import { clearMusicSelection, MusicPreviewController, readMusicSelection, select
 import { listProviderModels } from "../core/models.js";
 import { ProjectStore, type ProjectSummary } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
-import { DEFAULT_SETTINGS, OPENAI_SLOTS, OPENROUTER_SLOTS, readSettings, setAgentPermissionMode, setClaudeHarnessModel, setDefaultModel, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
+import { DEFAULT_SETTINGS, readSettings, setAgentPermissionMode, setBaseAgentModel, setClaudeHarnessModel, setDefaultModel, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
 import { formatTime } from "../core/time.js";
 import { EMPTY_USAGE_SUMMARY, formatUsd, type UsageSummary } from "../core/usage.js";
 import { AssetPanel } from "./AssetPanel.js";
@@ -29,7 +29,7 @@ import { History } from "./History.js";
 import { InputPanel } from "./InputPanel.js";
 import { editorLayout } from "./layout.js";
 import { ExportPanel, type ExportFocus, type ExportPanelState } from "./ExportPanel.js";
-import { filteredPickerModels, initialModelPicker, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
+import { capabilityDefinition, filteredPickerModels, initialModelPicker, MODEL_CAPABILITIES, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
 import { MusicPanel } from "./MusicPanel.js";
 import { ProjectsPanel } from "./ProjectsPanel.js";
 import { AssetsSidebar, ProjectSidebar } from "./Sidebars.js";
@@ -108,7 +108,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   const suggestions = useMemo(() => commandSuggestions(input), [input]);
   const musicTracks = useMemo(() => musicQuery.trim() ? searchMusicTracks(musicQuery) : listMusicTracks(), [musicQuery]);
   const currentFile = project?.current.filePath;
-  const agentModel = settingsReady ? settings.models.openai.text : "editor model";
+  const agentModel = settingsReady ? settings.models[settings.agent.provider].text : "editor model";
   const controlsHint = terminal.columns >= 120
     ? `${previewBackend.toUpperCase()} · Ctrl+P play · ←/→ 5s · +/- volume · ↑/↓ chat · Ctrl+G focus`
     : "Ctrl+P play · +/- volume · ↑/↓ chat · Ctrl+G focus";
@@ -357,15 +357,15 @@ export function App({ initialPath }: { initialPath?: string }) {
 
   const loadModelChoices = useCallback(async (provider: ModelProvider, slot: ModelSlot) => {
     const request = ++modelRequest.current;
-    setModelPicker({ step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: true, error: null });
+    setModelPicker((current) => ({ ...current, step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: true, error: null }));
     setLoader({ source: "Editor", stage: `Loading ${provider} ${slot} models` });
     try {
       const models = await listProviderModels(provider, slot);
       if (request !== modelRequest.current) return;
-      setModelPicker({ step: "models", provider, slot, models, query: "", selectedIndex: 0, loading: false, error: null });
+      setModelPicker((current) => ({ ...current, step: "models", provider, slot, models, query: "", selectedIndex: 0, loading: false, error: null }));
     } catch (error) {
       if (request !== modelRequest.current) return;
-      setModelPicker({ step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: false, error: errorMessage(error) });
+      setModelPicker((current) => ({ ...current, step: "models", provider, slot, models: [], query: "", selectedIndex: 0, loading: false, error: errorMessage(error) }));
     } finally {
       if (request === modelRequest.current) setLoader(null);
     }
@@ -373,14 +373,15 @@ export function App({ initialPath }: { initialPath?: string }) {
 
   const chooseModelPickerItem = useCallback(async () => {
     if (modelPicker.loading) return;
-    if (modelPicker.step === "provider") {
-      setModelPicker({ ...initialModelPicker(), step: "slot", provider: modelPicker.selectedIndex === 0 ? "openai" : "openrouter" });
+    if (modelPicker.step === "capability") {
+      const capability = MODEL_CAPABILITIES[modelPicker.selectedIndex] ?? MODEL_CAPABILITIES[0]!;
+      setModelPicker({ ...initialModelPicker(), step: "provider", capability: capability.id, slot: capability.slot });
       return;
     }
-    if (modelPicker.step === "slot") {
-      const slots = modelPicker.provider === "openai" ? OPENAI_SLOTS : OPENROUTER_SLOTS;
-      const slot = slots[modelPicker.selectedIndex] ?? "text";
-      await loadModelChoices(modelPicker.provider ?? "openai", slot);
+    if (modelPicker.step === "provider") {
+      const capability = capabilityDefinition(modelPicker.capability);
+      const provider = capability.providers[modelPicker.selectedIndex] ?? capability.providers[0]!;
+      await loadModelChoices(provider, capability.slot);
       return;
     }
     if (!modelPicker.provider) return;
@@ -389,11 +390,15 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (!selected) return;
     setLoader({ source: "Editor", stage: "Saving model default" });
     try {
-      const next = await setDefaultModel(modelPicker.provider, modelPicker.slot, selected.id);
+      const next = modelPicker.capability === "agent"
+        ? await setBaseAgentModel(modelPicker.provider, selected.id)
+        : await setDefaultModel(modelPicker.provider, modelPicker.slot, selected.id);
       setSettings(next);
       setOverlay(null);
       setStatus(`${selected.id} selected`);
-      await answer(`Default ${modelPicker.provider} ${modelPicker.slot} model set to ${selected.id}.`);
+      await answer(modelPicker.capability === "agent"
+        ? `Base agent set to ${selected.id} through ${modelPicker.provider}.`
+        : `Default ${modelPicker.provider} ${modelPicker.slot} model set to ${selected.id}.`);
     } catch (error) {
       setModelPicker((current) => ({ ...current, error: errorMessage(error) }));
     } finally {
@@ -404,12 +409,19 @@ export function App({ initialPath }: { initialPath?: string }) {
   const backModelPicker = useCallback(() => {
     modelRequest.current += 1;
     setLoader(null);
-    if (modelPicker.step === "provider") { setOverlay(null); return; }
-    if (modelPicker.step === "slot") {
+    if (modelPicker.step === "capability") { setOverlay(null); return; }
+    if (modelPicker.step === "provider") {
       setModelPicker(initialModelPicker());
       return;
     }
-    setModelPicker({ ...initialModelPicker(), step: "slot", provider: modelPicker.provider });
+    const capability = capabilityDefinition(modelPicker.capability);
+    setModelPicker({
+      ...initialModelPicker(),
+      step: "provider",
+      capability: modelPicker.capability,
+      slot: modelPicker.slot,
+      selectedIndex: Math.max(0, capability.providers.indexOf(modelPicker.provider ?? capability.providers[0]!)),
+    });
   }, [modelPicker]);
 
   const handleCommand = useCallback(async (line: string) => {
@@ -722,8 +734,8 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (modelPicker.loading || busy) return;
       if (key.upArrow || key.downArrow || key.tab) {
         setModelPicker((current) => {
-          const count = current.step === "provider" ? 2 : current.step === "slot"
-            ? (current.provider === "openai" ? OPENAI_SLOTS.length : OPENROUTER_SLOTS.length)
+          const count = current.step === "capability" ? MODEL_CAPABILITIES.length : current.step === "provider"
+            ? capabilityDefinition(current.capability).providers.length
             : filteredPickerModels(current).length;
           if (count === 0) return current;
           const direction = key.upArrow ? -1 : 1;
@@ -851,7 +863,7 @@ export function App({ initialPath }: { initialPath?: string }) {
           : <>
             {layout.leftSidebarColumns > 0 && <ProjectSidebar versions={sidebarVersions} currentId={project?.current.id ?? ""}
               projectName={project?.name ?? "No project"}
-              model={settings.models.openai.text} permissionMode={settings.agent.permissionMode} usage={usage} versionLimit={project?.versionLimit ?? 5}
+              model={settings.models[settings.agent.provider].text} permissionMode={settings.agent.permissionMode} usage={usage} versionLimit={project?.versionLimit ?? 5}
               width={layout.leftSidebarColumns} height={layout.playerRows} />}
             <VideoSurface {...(currentFile ? { filePath: currentFile } : {})} media={media} playing={playing} time={currentTime}
               columns={layout.videoColumns} rows={layout.playerRows} topRow={2} leftColumn={2 + layout.leftSidebarColumns}

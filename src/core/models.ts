@@ -101,7 +101,7 @@ async function listOpenRouterModels(slot: OpenRouterSlot): Promise<ProviderModel
     ? "https://openrouter.ai/api/v1/images/models"
     : slot === "video"
       ? "https://openrouter.ai/api/v1/videos/models"
-      : `https://openrouter.ai/api/v1/models?output_modalities=${encodeURIComponent(querySlot)}&sort=most-popular`;
+      : `https://openrouter.ai/api/v1/models?output_modalities=${encodeURIComponent(querySlot)}&sort=most-popular${slot === "text" ? "&input_modalities=text%2Cimage&supported_parameters=tools" : ""}`;
   const payload = await fetchCatalog(endpoint, undefined, headers);
   let models = normalize(payload, slot);
   if (slot === "image") models = await attachImagePrices(models, payload, headers);

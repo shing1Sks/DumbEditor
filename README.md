@@ -2,7 +2,7 @@
 
 **An agent first video editor that lives entirely in your terminal.**
 
-DumbEditor exists for edits that should not require a wall of buttons, several tutorials, or a credit hungry AI interface. Describe the result you want, preview it in the terminal, and keep every render reversible. FFmpeg performs edits locally; your configured OpenAI editor model plans and checks multi-step work.
+DumbEditor exists for edits that should not require a wall of buttons, several tutorials, or a credit hungry AI interface. Describe the result you want, preview it in the terminal, and keep every render reversible. FFmpeg performs edits locally; your configured OpenAI or OpenRouter base agent plans and checks multi-step work.
 
 ## V1 features
 
@@ -10,7 +10,7 @@ DumbEditor exists for edits that should not require a wall of buttons, several t
 - Stable player, timeline, chat, combined session/version sidebar, and asset sidebar
 - Row-bounded scrollable chat, a multiline composer, and native agent choice prompts with a custom answer field
 - Playback, five second seeking, marks, preview audio, and volume controls
-- A real OpenAI editor-agent tool loop that can inspect frames and chain several edits
+- A provider-selectable editor-agent tool loop that can inspect frames and chain several edits
 - Ask and automatic permission modes for model changes, custom provider parameters, and coding-harness delegation
 - Optional Claude Agent SDK specialist for workspace scripts and tools that do not fit the prepared edit layer
 - Remove, keep, speed, mute, and crop tools
@@ -75,14 +75,14 @@ use the background music I selected, loop it quietly under the whole video
 generate a five second establishing shot of a rainy city for this project
 ```
 
-The main editor agent defaults to `gpt-6-luna` and follows the OpenAI editor choice made through `/model`. DumbEditor does not impose a reasoning-round, tool-call, mutation, or output-token cap on the main agent. It continues until it finishes or the user cancels, and uses context compaction during long jobs. The default economical asset models are:
+The base editor agent defaults to OpenAI `gpt-6-luna`. `/model` can move the base agent to any tool-capable OpenRouter text model, and that provider selection controls the real editing runtime, API key, usage ledger, and UI model name. DumbEditor does not impose a reasoning-round, tool-call, mutation, or output-token cap on the main agent. It continues until it finishes or the user cancels. The default models are:
 
 | Capability | Default |
 | --- | --- |
-| OpenAI editor | `gpt-6-luna` |
+| Base agent (OpenAI) | `gpt-6-luna` |
 | OpenAI transcription | `gpt-transcribe` |
 | OpenAI speech | `gpt-4o-mini-tts` |
-| OpenRouter text | `openai/gpt-6-luna` |
+| Base agent alternative (OpenRouter) | `openai/gpt-6-luna` |
 | Image | `google/gemini-3.1-flash-lite-image` |
 | Music | `google/lyria-3-clip-preview` |
 | Video | `google/veo-3.1-lite` |
@@ -155,7 +155,7 @@ After selection, ask the editor agent to use the selected background music. It d
 
 ### Model browser
 
-`/model` opens the provider and capability picker. OpenAI exposes editor, transcription, and speech defaults. OpenRouter exposes text, image, audio, music, and video defaults. Type to search. Text shows input and output token prices; transcription shows its duration rate; speech and audio show their provider billing units; image uses image, megapixel, token, or request rates; music shows song or clip rates; video shows the live SKU range and billing unit.
+`/model` opens with capabilities first: Base agent, Image, Audio, Music, Video, Transcription, and Speech. Pick Base agent, then choose OpenAI or OpenRouter, then search the provider's model catalog. OpenRouter base-agent results are limited to models that advertise tool calling and image input because editing depends on tools and visual frame audits. Other capabilities show the providers DumbEditor can execute for that media type. Text shows input and output token prices; transcription shows its duration rate; speech and audio show their provider billing units; image uses image, megapixel, token, or request rates; music shows song or clip rates; video shows the live SKU range and billing unit.
 
 ### Agent permissions and coding harness
 

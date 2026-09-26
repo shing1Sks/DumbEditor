@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatImagePriceFields, formatPerMillionPrice, formatVideoPriceFields } from "../src/core/models.js";
-import { filteredPickerModels, initialModelPicker, modelPricePresentation } from "../src/ui/ModelPanel.js";
+import { formatImagePriceFields, formatPerMillionPrice, formatVideoPriceFields, listProviderModels } from "../src/core/models.js";
+import { capabilityDefinition, filteredPickerModels, initialModelPicker, MODEL_CAPABILITIES, modelPricePresentation } from "../src/ui/ModelPanel.js";
 
 const models = [
   { id: "gpt-6-luna", name: "GPT-6 Luna" },
@@ -9,11 +9,15 @@ const models = [
   { id: "openai/gpt-image", name: "OpenAI Image" },
 ];
 
-test("opens the model picker at provider selection", () => {
+test("opens the model picker at capability selection with a provider-diverse base agent", () => {
   const picker = initialModelPicker();
-  assert.equal(picker.step, "provider");
+  assert.equal(picker.step, "capability");
+  assert.equal(picker.capability, "agent");
   assert.equal(picker.selectedIndex, 0);
   assert.equal(picker.query, "");
+  assert.equal(MODEL_CAPABILITIES[0]?.label, "Base agent");
+  assert.deepEqual(capabilityDefinition("agent").providers, ["openai", "openrouter"]);
+  assert.deepEqual(capabilityDefinition("video").providers, ["openrouter"]);
 });
 
 test("presents OpenAI transcription and speech pricing by their billing units", () => {
@@ -68,4 +72,30 @@ test("formats image endpoint price ranges and capability-specific headings", () 
     second: "OUTPUT RATE",
     note: "Audio rates show whether billing uses tokens or input characters.",
   });
+});
+
+test("requests only visual tool-capable OpenRouter base-agent models", async () => {
+  const originalFetch = globalThis.fetch;
+  let requested = "";
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    requested = String(input);
+    return Response.json({
+      data: [{
+        id: "vendor/visual-agent",
+        name: "Visual Agent",
+        architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
+        pricing: { prompt: "0.000001", completion: "0.000002" },
+      }],
+    });
+  }) as typeof fetch;
+  try {
+    const listed = await listProviderModels("openrouter", "text");
+    const url = new URL(requested);
+    assert.equal(url.searchParams.get("supported_parameters"), "tools");
+    assert.equal(url.searchParams.get("input_modalities"), "text,image");
+    assert.equal(url.searchParams.get("output_modalities"), "text");
+    assert.deepEqual(listed.map((model) => model.id), ["vendor/visual-agent"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
