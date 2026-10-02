@@ -1,14 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isBackspace, isFocusReport, playbackStart } from "../src/ui/keys.js";
+import { isFocusReport, playbackStart } from "../src/shell/input/keys.js";
 
-test("treats the macOS and Linux Backspace byte, which Ink reports as delete, as Backspace", () => {
-  assert.equal(isBackspace({ backspace: true, delete: false }), true);
-  assert.equal(isBackspace({ backspace: false, delete: true }), true);
-  assert.equal(isBackspace({ backspace: false, delete: false }), false);
-});
-
-test("recognises focus reports with and without the escape Ink strips", () => {
+test("recognises focus reports with and without the leading escape", () => {
   for (const input of ["[I", "[O", "\u001B[I", "\u001B[O"]) assert.equal(isFocusReport(input), true);
   for (const input of ["I", "O", "[", "[Ix", "hello"]) assert.equal(isFocusReport(input), false);
 });

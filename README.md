@@ -250,6 +250,8 @@ After selection, ask the editor agent to use the selected background music. It d
 | `Esc` | Stop the agent when the input is empty, minimize expanded chat, clear input, or close a panel |
 | `Ctrl+C` | Stop the agent while it works; otherwise quit and terminate preview processes |
 | `Ctrl+O` | Open or close the project asset browser |
+| `Ctrl+Backspace` / `Ctrl+Delete` | Delete the word before or after the cursor in the message box |
+| `Ctrl+U` / `Ctrl+K` | Delete everything before or after the cursor on the row |
 
 While an agent request runs, its current stage appears in the header above the video. Chat scrolling, seeking, volume, and play/pause remain available during planning, tool review, transcription, and asset generation. DumbEditor pauses preview transport only while FFmpeg is rendering or validating a changed video and while the new version is being saved.
 
@@ -261,7 +263,7 @@ The chat footer shows the configured editor model by name alongside its running 
 
 ## Preview backend
 
-DumbEditor chooses Sixel in Windows Terminal and terminals that advertise Sixel support. Frames are scaled with Lanczos and painted only inside the reserved player surface. The preview is retained and composited with text updates through synchronized terminal output, so typing, chat scrolling, and transport changes do not blank or flash the image.
+DumbEditor chooses Sixel in Windows Terminal and terminals that advertise Sixel support. Frames are scaled with Lanczos and painted only inside the reserved player rectangle. The screen is a fixed-size full-screen view that redraws only the rows that changed, and the picture is a separate layer sent with the text in one synchronized update, only when something could have erased it. A long or multi-line message, a window resize, a streaming answer, or an open panel never moves the panels or the video. Panels such as help, music, export, and the model picker replace the video area while they are open and bring the picture back when they close.
 
 ```powershell
 $env:DUMBEDITOR_PREVIEW = "blocks"
@@ -328,7 +330,7 @@ npm run quality
 npm run release:check
 ```
 
-`npm run release:check` runs the full quality gate and shows the exact npm package contents without publishing. The test suite renders synthetic media with FFmpeg and checks pixels, PCM audio, version commits, input validation, catalog selection, preview lifecycle, terminal text layout, and the editor agent's function-call loop. It does not spend provider credits.
+`npm run release:check` runs the full quality gate and shows the exact npm package contents without publishing. The test suite renders synthetic media with FFmpeg and checks pixels, PCM audio, version commits, input validation, catalog selection, preview lifecycle, the full-screen layout driven through an emulated terminal (long input, resize, streaming, and panels), and the editor agent's function-call loop. It does not spend provider credits.
 
 ## License
 

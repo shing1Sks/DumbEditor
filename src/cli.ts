@@ -1,13 +1,11 @@
-import { render } from "ink";
+import { ProcessTerminal } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnvironment, runSetup } from "./core/config.js";
-import { terminateRunningProcesses } from "./core/process.js";
 import { ProjectStore } from "./core/project.js";
 import { markWelcomeShown } from "./core/settings.js";
-import { App } from "./ui/App.js";
-import { createLayeredStdout } from "./ui/terminal-layers.js";
+import { ShellApp } from "./shell/app.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnvironment(packageRoot);
@@ -75,35 +73,28 @@ if (launchArgs.length === 0) {
 }
 
 const initialPath = launchArgs[0]!;
+if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  console.error("DumbEditor needs an interactive terminal. Run it from a terminal window.");
+  process.exit(1);
+}
 process.title = "DumbEditor";
-const useAlternateScreen = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-let screenRestored = false;
-const restoreScreen = () => {
-  if (!useAlternateScreen || screenRestored) return;
-  screenRestored = true;
-  process.stdout.write("\u001B[?1004l\u001B[0m\u001B[?25h\u001B[?1049l");
-};
-
-if (useAlternateScreen) process.stdout.write("\u001B[?1049h\u001B[2J\u001B[H\u001B[?25l");
-const app = render(<App initialPath={initialPath} />, {
-  exitOnCtrlC: false,
-  stdout: createLayeredStdout(process.stdout),
-});
-process.once("exit", restoreScreen);
-// Closing the terminal tab sends SIGHUP and `kill` sends SIGTERM; neither runs "exit"
-// handlers, so stop child processes and restore the screen before leaving.
-for (const [signal, code] of [["SIGTERM", 143], ["SIGHUP", 129]] as const) {
-  process.once(signal, () => {
-    terminateRunningProcesses();
-    restoreScreen();
-    process.exit(code);
+const terminal = new ProcessTerminal();
+const exitCode = await new Promise<number>((done) => {
+  const app = new ShellApp({ terminal, initialPath, onExit: done });
+  process.once("exit", () => app.dispose());
+  // Closing the terminal tab sends SIGHUP and `kill` sends SIGTERM; neither runs "exit" handlers,
+  // so stop child processes and give the terminal back before leaving.
+  for (const [signal, code] of [["SIGTERM", 143], ["SIGHUP", 129]] as const) {
+    process.once(signal, () => { app.dispose(); done(code); });
+  }
+  app.start().catch((error: unknown) => {
+    app.dispose();
+    console.error(error instanceof Error ? error.message : String(error));
+    done(1);
   });
-}
-try {
-  await app.waitUntilExit();
-} finally {
-  app.unmount();
-}
+});
+await terminal.drainInput(200, 30);
+process.exit(exitCode);
 
 function overviewMessage(installedVersion: string): string {
   return `DumbEditor ${installedVersion}
