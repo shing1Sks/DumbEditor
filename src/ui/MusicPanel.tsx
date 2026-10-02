@@ -33,7 +33,7 @@ export function MusicPanel(props: {
           <Text dimColor wrap="truncate-end">{highlighted.license.attribution}</Text>
         </> : <Text dimColor>Try a mood such as bright, calm, reflective, or uplifting.</Text>}
       </Box>
-      <Text dimColor>↑/↓ choose · Space preview/stop · Enter select · type to search · Ctrl+U clear · Delete unselect · Esc close</Text>
+      <Text dimColor>↑/↓ choose · Space preview/stop · Enter select · type to search · Ctrl+U clear · Ctrl+K unselect · Esc close</Text>
     </Box>
   );
 }

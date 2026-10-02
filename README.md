@@ -221,7 +221,7 @@ Use Tab to move between destination, format, and compression. Use the arrow keys
 
 ### Music browser
 
-`/bg-music` opens a terminal popup. Type to search by title, genre, mood, artist, or description. Use Up and Down to move, Space to preview or stop, Enter to select, Delete to clear the selection, and Escape to close. The built-in catalog contains explicitly attributed Kevin MacLeod tracks under CC BY 4.0 and keeps each source page and license with the track.
+`/bg-music` opens a terminal popup. Type to search by title, genre, mood, artist, or description. Use Up and Down to move, Space to preview or stop, Enter to select, Ctrl+K to clear the selection, and Escape to close. The built-in catalog contains explicitly attributed Kevin MacLeod tracks under CC BY 4.0 and keeps each source page and license with the track.
 
 After selection, ask the editor agent to use the selected background music. It downloads the chosen track into the project workspace, records the attribution, and mixes it through the validated local audio tool.
 
@@ -251,13 +251,13 @@ After selection, ask the editor agent to use the selected background music. It d
 | `Ctrl+G` | Expand chat over the player or return to the video |
 | `Esc` | Minimize expanded chat, clear input, or close a panel |
 | `Ctrl+C` | Quit and terminate preview processes |
-| `Shift+A` | Open or close the project asset browser |
+| `Ctrl+O` | Open or close the project asset browser |
 
 While an agent request runs, its current stage appears in the header above the video. Chat scrolling, seeking, volume, and play/pause remain available during planning, tool review, transcription, and asset generation. DumbEditor pauses preview transport only while FFmpeg is rendering or validating a changed video and while the new version is being saved.
 
 ### Assets and cost tracking
 
-The right sidebar lists generated images, video, speech, music, subtitles, and agent workspace files. Each generated asset records its provider model and cost when the provider returns billing data; estimates are marked with `~`. Catalog assets retain their source page, exact license link, and required attribution. "Royalty-free" is treated as a licensing or payment term rather than a claim that an asset has no conditions. Press `Shift+A` or run `/assets` to browse the full list, use Up and Down to select an asset, and press Space to play audio, music, or video. Image and video assets have an inline preview. Start typing to close the browser, restore the main video player, and continue the text in chat.
+The right sidebar lists generated images, video, speech, music, subtitles, and agent workspace files. Each generated asset records its provider model and cost when the provider returns billing data; estimates are marked with `~`. Catalog assets retain their source page, exact license link, and required attribution. "Royalty-free" is treated as a licensing or payment term rather than a claim that an asset has no conditions. Press `Ctrl+O` or run `/assets` to browse the full list, use Up and Down to select an asset, and press Space to play audio, music, or video. Image and video assets have an inline preview. Start typing to close the browser, restore the main video player, and continue the text in chat.
 
 The chat footer shows the configured editor model by name alongside its running cost, harness cost, asset cost, and total. These values are stored in the source video's `.dumbeditor` project and survive restarts. Editor-model cost includes every Responses API round in a tool loop, including cached input and reasoning output reported by the API. If a media provider reports a charge for an empty generation, that failed attempt is also retained in the asset cost ledger without inventing an asset.
 

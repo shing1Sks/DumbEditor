@@ -9,7 +9,7 @@ export function Help({ model = "agent" }: { model?: string }) {
       <Text>/speed FROM TO FACTOR  /mute FROM TO  /crop WIDTHxHEIGHT [X,Y]</Text>
       <Text>/open path  /projects  /version [all]  /revert id  /undo</Text>
       <Text>/export [path] popup  /version-limits [N]  /model model picker</Text>
-      <Text>/bg-music music browser  /assets asset browser  (also Shift+A)</Text>
+      <Text>/bg-music music browser  /assets asset browser  (also Ctrl+O)</Text>
       <Text>/permissions [ask|auto]  /harness-model [MODEL]</Text>
       <Text dimColor>Type / for commands, use ↑/↓ to choose, and Tab to complete.</Text>
       <Text dimColor>↑/↓ scroll chat, PgUp/PgDn move a page, Ctrl+G expands chat.</Text>

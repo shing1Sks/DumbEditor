@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnvironment, runSetup } from "./core/config.js";
+import { terminateRunningProcesses } from "./core/process.js";
 import { ProjectStore } from "./core/project.js";
 import { markWelcomeShown } from "./core/settings.js";
 import { App } from "./ui/App.js";
@@ -80,7 +81,7 @@ let screenRestored = false;
 const restoreScreen = () => {
   if (!useAlternateScreen || screenRestored) return;
   screenRestored = true;
-  process.stdout.write("\u001B[0m\u001B[?25h\u001B[?1049l");
+  process.stdout.write("\u001B[?1004l\u001B[0m\u001B[?25h\u001B[?1049l");
 };
 
 if (useAlternateScreen) process.stdout.write("\u001B[?1049h\u001B[2J\u001B[H\u001B[?25l");
@@ -89,6 +90,15 @@ const app = render(<App initialPath={initialPath} />, {
   stdout: createLayeredStdout(process.stdout),
 });
 process.once("exit", restoreScreen);
+// Closing the terminal tab sends SIGHUP and `kill` sends SIGTERM; neither runs "exit"
+// handlers, so stop child processes and restore the screen before leaving.
+for (const [signal, code] of [["SIGTERM", 143], ["SIGHUP", 129]] as const) {
+  process.once(signal, () => {
+    terminateRunningProcesses();
+    restoreScreen();
+    process.exit(code);
+  });
+}
 try {
   await app.waitUntilExit();
 } finally {
@@ -154,7 +164,7 @@ Controls:
   Enter          Send a request or complete a slash command
   Esc            Minimize chat, close a panel, or clear the input
   Ctrl+C         Quit
-  Shift+A        Open or close the project asset browser
+  Ctrl+O         Open or close the project asset browser
 
 Editor commands:
   /clip-remove <FROM> <TO> [FROM TO ...]

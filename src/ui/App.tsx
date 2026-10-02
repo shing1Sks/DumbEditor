@@ -27,6 +27,7 @@ import { ChoicePanel, type ChoicePanelState } from "./ChoicePanel.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { InputPanel } from "./InputPanel.js";
+import { isBackspace, isFocusReport, playbackStart } from "./keys.js";
 import { editorLayout } from "./layout.js";
 import { ExportPanel, type ExportFocus, type ExportPanelState } from "./ExportPanel.js";
 import { capabilityDefinition, filteredPickerModels, initialModelPicker, MODEL_CAPABILITIES, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
@@ -283,14 +284,21 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (initialPath) void openVideo(initialPath);
     else addUiMessage("assistant", "Open a video with /open <path>, or relaunch as: dumbeditor video.mp4");
   }, [initialPath, openVideo, addUiMessage]);
+  // ffplay cannot change volume while running, so a volume change restarts it. Debounce
+  // so a burst of +/- presses causes one restart instead of one gap per keypress.
+  const [audioVolume, setAudioVolume] = useState(volume);
+  useEffect(() => {
+    const timer = setTimeout(() => setAudioVolume(volume), 400);
+    return () => clearTimeout(timer);
+  }, [volume]);
   useEffect(() => {
     if (!currentFile || !media?.hasAudio || !playing || layout.playerRows === 0) return;
     let stopped = false;
-    const audio: ChildProcess | null = playAudio(currentFile, currentTimeRef.current, volume, (error) => {
+    const audio: ChildProcess | null = playAudio(currentFile, playbackStart(currentTimeRef.current, media.duration), audioVolume, (error) => {
       if (!stopped) setStatus(`Audio preview unavailable: ${error.message}`);
     });
     return () => { stopped = true; terminateProcess(audio); };
-  }, [currentFile, media, playing, layout.playerRows, volume]);
+  }, [currentFile, media, playing, layout.playerRows, audioVolume]);
 
   const applyEdit = useCallback(async (edit: DirectEdit, request: string, source: LoaderState["source"]) => {
     if (!project) throw new Error("Open a video first with /open <path>.");
@@ -539,7 +547,7 @@ export function App({ initialPath }: { initialPath?: string }) {
 
   useInput((character, key) => {
     if (key.ctrl && character === "c") { exit(); return; }
-    if (character.includes("\u001B[I") || character.includes("\u001B[O")) return;
+    if (isFocusReport(character)) return;
     if (overlay === "approval") {
       if (key.escape) { resolveApproval(false); return; }
       if (key.leftArrow || key.rightArrow || key.tab) { setApprovalAllow((value) => !value); return; }
@@ -568,16 +576,12 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (choicePanel.customActive) {
         if (key.leftArrow) { setChoicePanel((current) => ({ ...current, customCursor: Math.max(0, current.customCursor - 1) })); return; }
         if (key.rightArrow) { setChoicePanel((current) => ({ ...current, customCursor: Math.min(current.customText.length, current.customCursor + 1) })); return; }
-        if (key.backspace) {
+        if (isBackspace(key)) {
           setChoicePanel((current) => current.customCursor === 0 ? current : {
             ...current,
             customText: current.customText.slice(0, current.customCursor - 1) + current.customText.slice(current.customCursor),
             customCursor: current.customCursor - 1,
           });
-          return;
-        }
-        if (key.delete) {
-          setChoicePanel((current) => ({ ...current, customText: current.customText.slice(0, current.customCursor) + current.customText.slice(current.customCursor + 1) }));
           return;
         }
         if (character && !key.ctrl && !key.meta && !key.tab) {
@@ -611,7 +615,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       return;
     }
     if (overlay === "assets") {
-      if (key.escape || (key.shift && character.toLowerCase() === "a")) { closeAssetBrowser(); return; }
+      if (key.escape || (key.ctrl && character === "o")) { closeAssetBrowser(); return; }
       if (key.upArrow || key.downArrow) {
         terminateProcess(assetPreview.current);
         assetPreview.current = null;
@@ -677,16 +681,12 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (key.ctrl && character === "u") { setExportPanel((current) => ({ ...current, destination: "", cursor: 0 })); return; }
       if (key.leftArrow) { setExportPanel((current) => ({ ...current, cursor: Math.max(0, current.cursor - 1) })); return; }
       if (key.rightArrow) { setExportPanel((current) => ({ ...current, cursor: Math.min(current.destination.length, current.cursor + 1) })); return; }
-      if (key.backspace) {
+      if (isBackspace(key)) {
         setExportPanel((current) => current.cursor === 0 ? current : {
           ...current,
           destination: current.destination.slice(0, current.cursor - 1) + current.destination.slice(current.cursor),
           cursor: current.cursor - 1,
         });
-        return;
-      }
-      if (key.delete) {
-        setExportPanel((current) => ({ ...current, destination: current.destination.slice(0, current.cursor) + current.destination.slice(current.cursor + 1) }));
         return;
       }
       if (character && !key.ctrl && !key.meta && !key.tab) {
@@ -728,9 +728,9 @@ export function App({ initialPath }: { initialPath?: string }) {
         }).catch((error) => setStatus(errorMessage(error)));
         return;
       }
-      if (key.delete) { void clearMusicSelection().then(() => { setSelectedMusicId(null); setStatus("Background music selection cleared"); }); return; }
+      if (key.ctrl && character === "k") { void clearMusicSelection().then(() => { setSelectedMusicId(null); setStatus("Background music selection cleared"); }); return; }
       if (key.ctrl && character === "u") { setMusicQuery(""); setMusicIndex(0); return; }
-      if (key.backspace) { setMusicQuery((value) => value.slice(0, -1)); setMusicIndex(0); return; }
+      if (isBackspace(key)) { setMusicQuery((value) => value.slice(0, -1)); setMusicIndex(0); return; }
       if (character && !key.ctrl && !key.meta && !key.tab) { setMusicQuery((value) => value + character.replace(/[\r\n]+/g, " ")); setMusicIndex(0); }
       return;
     }
@@ -751,7 +751,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       }
       if (key.return || key.rightArrow) { void chooseModelPickerItem(); return; }
       if (modelPicker.step === "models") {
-        if (key.backspace || key.delete) {
+        if (isBackspace(key)) {
           setModelPicker((current) => ({ ...current, query: current.query.slice(0, -1), selectedIndex: 0 }));
           return;
         }
@@ -791,7 +791,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (character === "-") { setVolume((value) => Math.max(0, value - 5)); return; }
       return;
     }
-    if (key.shift && character.toLowerCase() === "a") {
+    if (key.ctrl && character === "o") {
       openAssetBrowser();
       return;
     }
@@ -803,8 +803,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (key.return) { void submit(); return; }
     if (key.ctrl && character === "a") { setInputCursor(0); return; }
     if (key.ctrl && character === "e") { setInputCursor(input.length); return; }
-    if (key.backspace) { if (inputCursor > 0) { setInput((value) => value.slice(0, inputCursor - 1) + value.slice(inputCursor)); setInputCursor((value) => value - 1); } return; }
-    if (key.delete) { if (inputCursor < input.length) setInput((value) => value.slice(0, inputCursor) + value.slice(inputCursor + 1)); return; }
+    if (isBackspace(key)) { if (inputCursor > 0) { setInput((value) => value.slice(0, inputCursor - 1) + value.slice(inputCursor)); setInputCursor((value) => value - 1); } return; }
     if (key.leftArrow) { if (input.length > 0) setInputCursor((value) => Math.max(0, value - 1)); else { setPlaying(false); movePlayhead(currentTimeRef.current - 5); } return; }
     if (key.rightArrow) { if (input.length > 0) setInputCursor((value) => Math.min(input.length, value + 1)); else { setPlaying(false); movePlayhead(currentTimeRef.current + 5); } return; }
     if (key.upArrow) {

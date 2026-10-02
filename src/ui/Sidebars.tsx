@@ -52,7 +52,7 @@ export function AssetsSidebar(props: { assets: AgentAsset[]; usage: UsageSummary
         </Text>
       ))}
       {props.assets.length > visible.length && <Text dimColor>+{props.assets.length - visible.length} more</Text>}
-      <Text dimColor wrap="truncate-end">Shift+A to browse</Text>
+      <Text dimColor wrap="truncate-end">Ctrl+O to browse</Text>
     </Box>
   );
 }
