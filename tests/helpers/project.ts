@@ -31,7 +31,8 @@ export async function makeProject(): Promise<TestProject> {
     async cleanup() {
       if (previousConfig === undefined) delete process.env.DUMBEDITOR_CONFIG_DIR;
       else process.env.DUMBEDITOR_CONFIG_DIR = previousConfig;
-      await rm(directory, { recursive: true, force: true });
+      // Windows keeps a file locked for a moment after FFmpeg exits, so retry the removal.
+      await rm(directory, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
     },
   };
 }
