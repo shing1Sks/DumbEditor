@@ -15,10 +15,9 @@ export interface DumbEditorSettings {
   schemaVersion: 1;
   welcomeShown: boolean;
   agent: {
+    /** Always "openrouter": the agent runs on OpenRouter only. */
     provider: ModelProvider;
     permissionMode: AgentPermissionMode;
-    claudeModel: string;
-    claudeMaxBudgetUsd: number;
     /** Pause and ask to continue when one agent run has spent this much. 0 disables the limit. */
     spendCeilingUsd: number;
   };
@@ -32,10 +31,8 @@ export const DEFAULT_SETTINGS: DumbEditorSettings = {
   schemaVersion: 1,
   welcomeShown: false,
   agent: {
-    provider: "openai",
+    provider: "openrouter",
     permissionMode: "ask",
-    claudeModel: "claude-sonnet-4-6",
-    claudeMaxBudgetUsd: 0.5,
     spendCeilingUsd: 5,
   },
   models: {
@@ -89,6 +86,7 @@ export async function setDefaultModel(provider: ModelProvider, slot: ModelSlot, 
 }
 
 export async function setBaseAgentModel(provider: ModelProvider, model: string): Promise<DumbEditorSettings> {
+  if (provider !== "openrouter") throw new Error("The editor agent runs on OpenRouter only.");
   const value = model.trim();
   if (!value || value.length > 200 || /\s/.test(value)) throw new Error("Model IDs cannot be empty or contain spaces.");
   const settings = await readSettings();
@@ -113,15 +111,6 @@ export async function setSpendCeiling(usd: number): Promise<DumbEditorSettings> 
   return settings;
 }
 
-export async function setClaudeHarnessModel(model: string): Promise<DumbEditorSettings> {
-  const value = cleanModel(model, "");
-  if (!value) throw new Error("Claude model IDs cannot be empty or contain spaces.");
-  const settings = await readSettings();
-  settings.agent.claudeModel = value;
-  await writeSettings(settings);
-  return settings;
-}
-
 /** Returns true only for the first no-argument launch. */
 export async function markWelcomeShown(): Promise<boolean> {
   const settings = await readSettings();
@@ -137,10 +126,8 @@ function normalizeSettings(raw: Partial<DumbEditorSettings>): DumbEditorSettings
     schemaVersion: 1,
     welcomeShown: raw.welcomeShown === true,
     agent: {
-      provider: raw.agent?.provider === "openrouter" ? "openrouter" : "openai",
+      provider: "openrouter",
       permissionMode: raw.agent?.permissionMode === "auto" ? "auto" : "ask",
-      claudeModel: cleanModel(raw.agent?.claudeModel, DEFAULT_SETTINGS.agent.claudeModel),
-      claudeMaxBudgetUsd: finiteBudget(raw.agent?.claudeMaxBudgetUsd, DEFAULT_SETTINGS.agent.claudeMaxBudgetUsd),
       spendCeilingUsd: spendCeiling(raw.agent?.spendCeilingUsd, DEFAULT_SETTINGS.agent.spendCeilingUsd),
     },
     models: {
@@ -162,10 +149,6 @@ function normalizeSettings(raw: Partial<DumbEditorSettings>): DumbEditorSettings
 
 function spendCeiling(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= MAX_SPEND_CEILING_USD ? value : fallback;
-}
-
-function finiteBudget(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 20 ? value : fallback;
 }
 
 function cleanModel(value: unknown, fallback: string): string {

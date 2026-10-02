@@ -22,20 +22,17 @@ export async function runSetup(): Promise<void> {
   const saved = await readSavedConfig();
   process.stdout.write("DumbEditor setup\nKeys stay in your local user config and are never printed.\n\n");
 
-  const openai = await promptSecret(`OpenAI API key${saved.OPENAI_API_KEY ? " (Enter keeps saved key)" : ""}: `);
-  const openaiKey = openai || saved.OPENAI_API_KEY;
-  if (!openaiKey) throw new Error("An OpenAI API key is required.");
+  const openrouter = await promptSecret(`OpenRouter API key${saved.OPENROUTER_API_KEY ? " (Enter keeps saved key)" : ""}: `);
+  const openrouterKey = openrouter || saved.OPENROUTER_API_KEY;
+  if (!openrouterKey) throw new Error("An OpenRouter API key is required.");
 
-  const openrouter = await promptSecret(`OpenRouter API key (optional)${saved.OPENROUTER_API_KEY ? " (Enter keeps saved key; - removes it)" : " (Enter skips)"}: `);
-  const openrouterKey = openrouter === "-" ? "" : (openrouter || saved.OPENROUTER_API_KEY || "");
-  const anthropic = await promptSecret(`Anthropic API key for optional Claude harness${saved.ANTHROPIC_API_KEY ? " (Enter keeps saved key; - removes it)" : " (optional; Enter skips)"}: `);
-  const anthropicKey = anthropic === "-" ? "" : (anthropic || saved.ANTHROPIC_API_KEY || "");
+  const openai = await promptSecret(`OpenAI API key for speech transcription and text to speech (optional)${saved.OPENAI_API_KEY ? " (Enter keeps saved key; - removes it)" : " (Enter skips)"}: `);
+  const openaiKey = openai === "-" ? "" : (openai || saved.OPENAI_API_KEY || "");
 
   const lines = [
     "# DumbEditor user configuration",
-    `OPENAI_API_KEY=${JSON.stringify(openaiKey)}`,
-    ...(openrouterKey ? [`OPENROUTER_API_KEY=${JSON.stringify(openrouterKey)}`] : []),
-    ...(anthropicKey ? [`ANTHROPIC_API_KEY=${JSON.stringify(anthropicKey)}`] : []),
+    `OPENROUTER_API_KEY=${JSON.stringify(openrouterKey)}`,
+    ...(openaiKey ? [`OPENAI_API_KEY=${JSON.stringify(openaiKey)}`] : []),
     "",
   ];
   await mkdir(dirname(userConfigPath), { recursive: true });
@@ -49,11 +46,10 @@ export async function runSetup(): Promise<void> {
     : `Agent sandbox unavailable: ${sandbox.detail}\nRun dumbeditor setup again to enable isolated scripts.\n`);
 }
 
-export function providerKeyStatus(): { openai: boolean; openrouter: boolean; anthropic: boolean } {
+export function providerKeyStatus(): { openai: boolean; openrouter: boolean } {
   return {
     openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
     openrouter: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
-    anthropic: Boolean(process.env.ANTHROPIC_API_KEY?.trim()),
   };
 }
 

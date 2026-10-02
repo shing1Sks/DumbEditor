@@ -162,8 +162,8 @@ Controls:
   [ / ]          Mark selection in / out
   Tab            Complete the selected slash command
   Enter          Send a request or complete a slash command
-  Esc            Minimize chat, close a panel, or clear the input
-  Ctrl+C         Quit
+  Esc            Stop the agent, minimize chat, close a panel, or clear the input
+  Ctrl+C         Stop the agent while it works; otherwise quit
   Ctrl+O         Open or close the project asset browser
 
 Editor commands:
@@ -183,7 +183,8 @@ Editor commands:
   /bg-music [query]  Search, preview, and select open-license music
   /assets            Browse generated and project assets
   /permissions [mode] Show or set ask/auto approval mode
-  /harness-model [id] Show or set the optional Claude harness model
+  /budget [USD]       Show or set the per-run spend limit (0 turns it off)
+  /compact            Summarize earlier conversation to free context
   /status            Show project details
   /play              Play the preview
   /pause             Pause the preview

@@ -74,12 +74,11 @@ For development, use `npm run dev -- "./video.mp4"`.
 
 ## Requirements and platform support
 
-- Node.js 20.11 or newer
+- Node.js 22.19 or newer
 - `ffmpeg` and `ffprobe` on `PATH`
 - `ffplay` on `PATH` for preview audio and catalog music auditioning
-- An OpenAI API key for the default editor agent
-- An optional OpenRouter key for alternate agents and image, music, or video generation
-- An optional Anthropic API key for the Claude coding harness
+- An OpenRouter API key for the editor agent and for image, music, and video generation
+- An optional OpenAI API key for speech transcription and text to speech
 
 Common FFmpeg installations:
 
@@ -121,11 +120,12 @@ The first no-argument launch explains DUMB and shows the two startup commands. L
 - Automatic transcription, speaker-aware subtitle options, and burned captions
 - Image, speech, music, and video asset generation through configured provider models
 - Searchable CC BY 4.0 music with preview, source, license, attribution, and modification records
-- Ask and automatic permission modes for model and parameter changes
-- Optional Claude coding harness and isolated Python or JavaScript workspace tools
+- A streaming agent you can watch, steer by typing, and stop with Esc, with context compaction and sessions that resume after a restart
+- Ask and automatic permission modes for paid generation and custom code, plus a per-run spend limit
+- Isolated Python or JavaScript workspace tools
 - Immutable versions with undo, revert, branches, export, and configurable retention
 - Interactive model catalogs with capability-specific prices
-- Persistent agent, harness, and asset cost ledgers
+- Persistent agent and asset cost ledgers
 
 ## Projects and source safety
 
@@ -135,7 +135,7 @@ Projects receive a readable name from the first natural-language request plus th
 
 ## Ask the editor agent
 
-Write normal requests. The configured editor model receives the active version, media details, playhead, marks, and project conversation. It can inspect sampled frames, call several tools in sequence, recover from a failed tool call, and summarize the versions and assets it created. After a rendered mutation, the runtime requires the model to inspect output frames before it can finish the run.
+Write normal requests. The configured editor model sees the active version, media details, playhead, marks, and the project conversation, and it is told again whenever you move the playhead or change marks, so "cut here" works. It can inspect sampled frames, call several tools in sequence, list and revert its own versions, recover from a failed tool call, and summarize the versions and assets it created. Everything it does streams into the conversation as it happens. Type while it works to steer it, press Esc to stop it. After a rendered mutation, the runtime asks the model to inspect output frames before it can finish the run.
 
 ```text
 remove the first two seconds and mute the last five
@@ -147,23 +147,20 @@ use the background music I selected, loop it quietly under the whole video
 generate a five second establishing shot of a rainy city for this project
 ```
 
-The base editor agent defaults to OpenAI `gpt-6-luna`. `/model` can move the base agent to any tool-capable OpenRouter text model, and that provider selection controls the real editing runtime, API key, usage ledger, and UI model name. DumbEditor does not impose a reasoning-round, tool-call, mutation, or output-token cap on the main agent. It continues until it finishes or the user cancels. The default models are:
+The editor agent runs on OpenRouter and defaults to `openai/gpt-6-luna`. `/model` can move it to any OpenRouter text model that supports tool calling and image input. Long sessions are compacted automatically when the conversation passes 60% of the model's context window, or on demand with `/compact`; a run that spends more than the per-run limit pauses and asks to continue (`/budget`, $5 by default). The default models are:
 
 | Capability | Default |
 | --- | --- |
-| Base agent (OpenAI) | `gpt-6-luna` |
+| Base agent (OpenRouter) | `openai/gpt-6-luna` |
 | OpenAI transcription | `gpt-transcribe` |
 | OpenAI speech | `gpt-4o-mini-tts` |
-| Base agent alternative (OpenRouter) | `openai/gpt-6-luna` |
 | Image | `google/gemini-3.1-flash-lite-image` |
 | Music | `google/lyria-3-clip-preview` |
 | Video | `google/veo-3.1-lite` |
 
 Provider catalogs and prices change. `/model` loads the current catalog and displays each capability in its billing unit before selection.
 
-The editor agent may override a configured specialist model and pass provider-specific parameters for one request. In the default `ask` permission mode, DumbEditor displays the provider, model, and parameters and waits for Allow once or Deny. `/permissions auto` lets DumbEditor proceed automatically. The selected defaults remain unchanged unless you change them through `/model`.
-
-For work that needs new code or an unfamiliar tool chain, the editor agent can delegate a bounded task to Claude Agent SDK. Claude works inside the current project's agent workspace, can read the active video, and uses its own tool permission classifier in auto mode. The integration is optional and only appears when an Anthropic key is configured.
+The editor agent may override a configured specialist model and pass provider-specific parameters for one request. In the default `ask` permission mode, DumbEditor shows what the agent wants to do and waits for Allow once, Allow this session, or Deny before it generates paid assets, uses a model override, runs a custom FFmpeg graph, or runs a script. `/permissions auto` lets DumbEditor proceed automatically. The selected defaults remain unchanged unless you change them through `/model`.
 
 When asked to add subtitles without a supplied file, the editor agent extracts the audio in short chunks, transcribes it with the configured OpenAI transcription model, creates a timed SRT in the project workspace, and burns it into a new version. Chunked processing keeps long recordings below individual upload limits. Cue timing is estimated within each chunk because the durable default transcription model returns text rather than word timestamps. The agent can request `gpt-4o-transcribe-diarize` when speaker labels are useful; the model switch goes through the active permission policy and produces speaker-timed SRT cues.
 
@@ -188,7 +185,8 @@ Type `/` to open the scrollable command menu. Use Up and Down to choose, then Ta
 /assets
 /model
 /permissions [ask|auto]
-/harness-model [MODEL]
+/budget [USD]
+/compact
 /status
 /play
 /pause
@@ -227,13 +225,13 @@ After selection, ask the editor agent to use the selected background music. It d
 
 ### Model browser
 
-`/model` opens with capabilities first: Base agent, Image, Audio, Music, Video, Transcription, and Speech. Pick Base agent, then choose OpenAI or OpenRouter, then search the provider's model catalog. OpenRouter base-agent results are limited to models that advertise tool calling and image input because editing depends on tools and visual frame audits. Other capabilities show the providers DumbEditor can execute for that media type. Text shows input and output token prices; transcription shows its duration rate; speech and audio show their provider billing units; image uses image, megapixel, token, or request rates; music shows song or clip rates; video shows the live SKU range and billing unit.
+`/model` opens with capabilities first: Base agent, Image, Audio, Music, Video, Transcription, and Speech. Pick Base agent, then search the OpenRouter model catalog. Base-agent results are limited to models that advertise tool calling and image input because editing depends on tools and visual frame audits. Other capabilities show the providers DumbEditor can execute for that media type. Text shows input and output token prices; transcription shows its duration rate; speech and audio show their provider billing units; image uses image, megapixel, token, or request rates; music shows song or clip rates; video shows the live SKU range and billing unit.
 
-### Agent permissions and coding harness
+### Agent permissions, spend limit, and context
 
-`/permissions ask` is the default. A centered approval popup appears before a one-run model change, custom provider parameters, or Claude harness delegation. Use Left, Right, or Tab to choose, Enter to confirm, and Escape to deny. `/permissions auto` allows these operations without the DumbEditor popup; Claude's SDK permission classifier still evaluates its internal tool calls.
+`/permissions ask` is the default. A centered approval popup appears before paid asset generation, a model or parameter override, a custom FFmpeg graph, or a script. Use Left, Right, or Tab to choose, Enter to confirm, and Escape to deny. Allow this session skips the popup for that action until you quit. `/permissions auto` allows these operations without a popup.
 
-`/harness-model` shows the configured Claude model. `/harness-model <MODEL>` changes it. Harness runs have a bounded turn count and cost budget, and their reported cost is added to the project ledger.
+`/budget` shows the per-run spend limit and `/budget <USD>` changes it. When one agent run reaches the limit it pauses and asks whether to continue; `/budget 0` turns the limit off. `/compact` summarizes earlier conversation now, keeping a record of what the agent saw in inspected frames.
 
 ## Controls
 
@@ -249,8 +247,8 @@ After selection, ask the editor agent to use the selected background music. It d
 | `Enter` | Send, complete, or select |
 | `PageUp` / `PageDown` | Scroll chat history without moving the input cursor |
 | `Ctrl+G` | Expand chat over the player or return to the video |
-| `Esc` | Minimize expanded chat, clear input, or close a panel |
-| `Ctrl+C` | Quit and terminate preview processes |
+| `Esc` | Stop the agent when the input is empty, minimize expanded chat, clear input, or close a panel |
+| `Ctrl+C` | Stop the agent while it works; otherwise quit and terminate preview processes |
 | `Ctrl+O` | Open or close the project asset browser |
 
 While an agent request runs, its current stage appears in the header above the video. Chat scrolling, seeking, volume, and play/pause remain available during planning, tool review, transcription, and asset generation. DumbEditor pauses preview transport only while FFmpeg is rendering or validating a changed video and while the new version is being saved.
@@ -259,7 +257,7 @@ While an agent request runs, its current stage appears in the header above the v
 
 The right sidebar lists generated images, video, speech, music, subtitles, and agent workspace files. Each generated asset records its provider model and cost when the provider returns billing data; estimates are marked with `~`. Catalog assets retain their source page, exact license link, and required attribution. "Royalty-free" is treated as a licensing or payment term rather than a claim that an asset has no conditions. Press `Ctrl+O` or run `/assets` to browse the full list, use Up and Down to select an asset, and press Space to play audio, music, or video. Image and video assets have an inline preview. Start typing to close the browser, restore the main video player, and continue the text in chat.
 
-The chat footer shows the configured editor model by name alongside its running cost, harness cost, asset cost, and total. These values are stored in the source video's `.dumbeditor` project and survive restarts. Editor-model cost includes every Responses API round in a tool loop, including cached input and reasoning output reported by the API. If a media provider reports a charge for an empty generation, that failed attempt is also retained in the asset cost ledger without inventing an asset.
+The chat footer shows the configured editor model by name alongside its running cost, asset cost, and total. These values are stored in the source video's `.dumbeditor` project and survive restarts. Editor-model cost is the charge OpenRouter reports for every request in a run, including cached input and reasoning output; when OpenRouter does not report one, the catalog price is used and marked `~`. If a media provider reports a charge for an empty generation, that failed attempt is also retained in the asset cost ledger without inventing an asset.
 
 ## Preview backend
 
@@ -286,14 +284,12 @@ flowchart LR
   Agent --> Assets[Asset providers]
   Agent --> Tools[Validated edit tools]
   Agent --> Compose[Custom FFmpeg composition]
-  Agent --> Claude[Optional Claude coding harness]
   Agent --> Sandbox[Optional isolated scripts]
   Assets --> Workspace[Project workspace]
   Workspace --> Tools
   Tools --> FFmpeg
   Compose --> FFmpeg
   Sandbox --> Workspace
-  Claude --> Workspace
   FFmpeg --> Version[Probed immutable version]
   Version --> Preview[Terminal preview]
 ```
@@ -306,7 +302,7 @@ Each source has a project directory beside it:
   chat.jsonl
   versions/
   agent/
-    context.jsonl
+    session.jsonl
     workspace/
       assets.json
       assets/
@@ -316,11 +312,9 @@ Each source has a project directory beside it:
   ...archived project session...
 ```
 
-The readable transcript stays in `chat.jsonl`. Raw response items and tool results are appended to the agent ledger. Generated assets and supporting files persist in the project workspace.
+The readable transcript stays in `chat.jsonl`. The agent's full conversation, including tool calls, results, and compaction summaries, is appended to `agent/session.jsonl`, so a project resumes where it left off. Generated assets and supporting files persist in the project workspace. Versions the agent has seen are pinned and survive retention pruning.
 
 The agent uses prepared tools for common work and can build a custom FFmpeg filter graph for combinations that do not have a dedicated command. Filter graph inputs are limited to the active video and registered workspace assets. It can send multiple extracted frames to its vision input to inspect the source and audit each rendered result. When a creative decision has several useful directions, the agent can open a native terminal choice picker and receive either a selected option or a custom answer before continuing.
-
-The optional Claude harness gives the editor model a coding specialist with file, search, and shell tools scoped to the project's `agent/workspace/files` directory. Its shell runs in the Claude SDK sandbox with network disabled, unsandboxed commands forbidden, the active video and project assets readable, only that files directory writable, and provider credentials removed from child commands. DumbEditor owns the outer approval policy, version store, asset ledger, and cost ledger. Claude returns created workspace files to the editor model, which remains responsible for applying validated edits and auditing the video output.
 
 The agent can also write subtitle files, notes, and scripts inside the workspace. Python and JavaScript scripts run through Anthropic's lightweight Sandbox Runtime, the same open source runtime developed for Claude Code. It uses native OS isolation without a container: a dedicated restricted user and Windows Filtering Platform fence on Windows, Seatbelt on macOS, and bubblewrap plus seccomp on Linux. The active video is read-only, only the current agent workspace is writable, networking is disabled, and API keys are withheld. `dumbeditor setup` performs the one-time Windows sandbox installation with one UAC prompt.
 
