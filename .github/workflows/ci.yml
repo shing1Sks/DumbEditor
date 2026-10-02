@@ -34,7 +34,14 @@ jobs:
           node-version: 22.19.0
           cache: npm
       - run: npm ci
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
       - run: npm run check
+      - run: npm test
       - run: npm run build
       - run: node dist/cli.js --version
       - run: node dist/cli.js --help
