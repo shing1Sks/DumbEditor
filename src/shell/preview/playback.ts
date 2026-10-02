@@ -1,0 +1,117 @@
+import {
+  encodePreviewFrame, extractRawFrame, previewRenderSize, streamRawPreview,
+  type PreviewBackend, type PreviewSize, type PreviewStream,
+} from "../../core/media.js";
+import type { MediaInfo } from "../../types.js";
+import { playbackStart } from "../input/keys.js";
+
+export interface PlaybackInput {
+  filePath: string | null | undefined;
+  media: MediaInfo | null;
+  /** Room for the picture, in terminal cells. */
+  columns: number;
+  rows: number;
+  backend: PreviewBackend;
+  playing: boolean;
+  /** Where to show a still frame, or where playing starts. */
+  time: number;
+}
+
+export interface PlaybackFrame {
+  encoded: string;
+  size: PreviewSize;
+  backend: PreviewBackend;
+  time: number;
+}
+
+export interface PlaybackCallbacks {
+  onFrame(frame: PlaybackFrame): void;
+  /** The video played to its end. Not called when playback is stopped or replaced. */
+  onEnd(): void;
+  onError(error: Error): void;
+}
+
+/**
+ * Turns "what should the preview show" into pictures. While paused it shows one frame at the playhead; while
+ * playing it streams frames from FFmpeg. Calling `update` again with the same input does nothing, so it can be
+ * called on every state change.
+ */
+export class PlaybackController {
+  private key = "";
+  private generation = 0;
+  private stopCurrent: () => void = () => undefined;
+  private pending: { buffer: Buffer; time: number } | null = null;
+  private draining = false;
+
+  constructor(private readonly callbacks: PlaybackCallbacks) {}
+
+  update(input: PlaybackInput): void {
+    const key = JSON.stringify([input.filePath, input.media?.duration, input.media?.width, input.media?.height, input.columns, input.rows, input.backend, input.playing, input.playing ? null : input.time]);
+    if (key === this.key) return;
+    this.key = key;
+    this.stop();
+    const { filePath, media } = input;
+    if (!filePath || !media) return;
+    const size = previewRenderSize(media, input.columns, input.rows, input.backend);
+    if (size.width === 0 || size.height === 0) return;
+    const generation = this.generation;
+    const deliver = (buffer: Buffer, time: number) => this.queue(generation, buffer, time, size, input.backend);
+
+    if (!input.playing) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        void extractRawFrame(filePath, input.time, size, controller.signal)
+          .then((frame) => deliver(frame, input.time))
+          .catch((error: unknown) => { if (!controller.signal.aborted && generation === this.generation) this.callbacks.onError(toError(error)); });
+      }, 40);
+      this.stopCurrent = () => { clearTimeout(timer); controller.abort(); };
+      return;
+    }
+
+    const preview: PreviewStream = streamRawPreview({
+      filePath, start: playbackStart(input.time, media.duration), size, fps: input.backend === "sixel" ? 12 : 10,
+      onFrame: (frame, time) => deliver(frame, Math.min(time, media.duration)),
+      onEnd: () => { if (generation === this.generation) this.callbacks.onEnd(); },
+      onError: (error) => { if (generation === this.generation) this.callbacks.onError(error); },
+    });
+    this.stopCurrent = () => preview.stop();
+  }
+
+  dispose(): void {
+    this.key = "";
+    this.stop();
+  }
+
+  private stop(): void {
+    this.generation += 1;
+    this.pending = null;
+    this.stopCurrent();
+    this.stopCurrent = () => undefined;
+  }
+
+  /** Keep only the newest frame while the previous one is still being encoded. */
+  private queue(generation: number, buffer: Buffer, time: number, size: PreviewSize, backend: PreviewBackend): void {
+    if (generation !== this.generation) return;
+    this.pending = { buffer, time };
+    if (this.draining) return;
+    this.draining = true;
+    const flush = (): void => {
+      const next = this.pending;
+      this.pending = null;
+      if (next && generation === this.generation) {
+        try {
+          this.callbacks.onFrame({ encoded: encodePreviewFrame(next.buffer, size, backend), size, backend, time: next.time });
+        } catch (error) {
+          this.callbacks.onError(toError(error));
+        }
+      }
+      if (this.pending && generation === this.generation) setImmediate(flush);
+      else this.draining = false;
+    };
+    setImmediate(flush);
+  }
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
