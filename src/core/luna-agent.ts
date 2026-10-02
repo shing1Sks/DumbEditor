@@ -94,7 +94,7 @@ export async function runLunaAgent(options: {
   let auditedSinceMutation = true;
 
   let round = 0;
-  const packagedSkills = await loadAgentSkills();
+  const packagedSkills = (await loadAgentSkills()).map((skill) => `## ${skill.name}\n${skill.body}`).join("\n\n");
   while (true) {
     options.onStage?.(round === 0 ? "planning the edit" : "reviewing tool results");
     const response = await fetch(provider === "openrouter" ? "https://openrouter.ai/api/v1/responses" : "https://api.openai.com/v1/responses", {

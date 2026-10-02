@@ -1,3 +1,8 @@
+---
+name: agent-workspace
+description: Write subtitle files and scripts in the isolated project workspace and run them in the local sandbox.
+---
+
 # Agent workspace
 
 The project workspace stores generated assets, subtitle files, notes, and reusable scripts. Paths are confined to the current project's `agent/workspace` directory and text files are limited to 1 MB.
