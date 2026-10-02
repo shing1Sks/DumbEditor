@@ -1,4 +1,4 @@
-import { matchesKey } from "@earendil-works/pi-tui";
+import { matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ApprovalDecision } from "../../core/engine/events.js";
 import type { ApprovalRequest } from "../state/shell-state.js";
 import { bold, green, inverse, red, yellow } from "../views/style.js";
@@ -32,10 +32,13 @@ export class ApprovalPanel extends Panel {
     const { request } = this.options;
     const choices = approvalOptions(request);
     const args = request.args === undefined ? null : JSON.stringify(request.args);
+    // Inside the box: its two border columns and two columns of padding on each side. Long text is wrapped so the
+    // user reads all of what they are about to allow.
+    const room = Math.max(10, Math.min(86, width - 4) - 6);
     const lines = [
       bold(yellow(request.kind === "budget" ? "Spend limit reached" : "Permission required")),
-      bold(request.summary),
-      ...(RISK_NOTE[request.risk] ? [RISK_NOTE[request.risk] as string] : []),
+      ...wrapTextWithAnsi(request.summary, room).map((line) => bold(line)),
+      ...(RISK_NOTE[request.risk] ? wrapTextWithAnsi(RISK_NOTE[request.risk] as string, room) : []),
       ...(args ? [`Arguments: ${args}`] : []),
       "",
       choices.map((choice, index) => {

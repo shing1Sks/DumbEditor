@@ -1,6 +1,6 @@
 import type { Terminal } from "@earendil-works/pi-tui";
 import { LayeredTerminal, type VideoLayer } from "./layered-terminal.js";
-import { buildVideoLayer, type CellRect, type EncodedFrame } from "./video-layer.js";
+import { buildVideoLayer, frameFits, type CellRect, type EncodedFrame } from "./video-layer.js";
 
 export interface PreviewHostOptions {
   /** True when the picture should be on screen: a video is open and no panel or expanded chat covers the band. */
@@ -52,6 +52,8 @@ export class PreviewHost {
   private layer(): VideoLayer | null {
     if (!this.frame || !this.options.visible()) return null;
     const rect = this.options.rect();
+    // A picture made for a bigger window would cover the chat and the prompt box: wait for one that fits.
+    if (!frameFits(this.frame, rect)) return null;
     const rectKey = `${rect.x},${rect.y},${rect.w},${rect.h}`;
     if (!this.cached || this.cached.revision !== this.revision || this.cached.rect !== rectKey) {
       this.cached = { revision: this.revision, rect: rectKey, output: buildVideoLayer(this.frame, rect) };

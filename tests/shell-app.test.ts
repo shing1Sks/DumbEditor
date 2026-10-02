@@ -198,3 +198,14 @@ test("disposing the app while the video plays stops the picture, the sound and e
     await project.cleanup();
   }
 });
+
+test("while the editor renders a new version the preview stops playing", { timeout: 90_000 }, async () => {
+  const t = await boot({ engine: false });
+  try {
+    t.fake.send(KEY.ctrlP);
+    await until(() => t.app.state.playing, 5_000, "playing");
+    t.app.state.setLoader({ source: "glm", stage: "Rendering with FFmpeg" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(t.app.state.playing, false, "paused for the render, not because the clip ended");
+  } finally { await t.cleanup(); }
+});

@@ -199,3 +199,23 @@ test("the preview host paints each new picture in the video rectangle, and hides
   await tick();
   assert.equal(sixelPlacements(inner.since(hidden)).length, 0, "nothing to draw after clear");
 });
+
+test("stopping writes what is pending straight away and leaves no picture behind", async () => {
+  const { inner, terminal } = layered();
+  terminal.write("restore the screen");
+  terminal.stop();
+  assert.equal(inner.writes.at(-1), "restore the screen", "written at once: queued work never runs while the process is exiting");
+  await tick();
+  assert.ok(!inner.writes.join("").includes("<IMG>"), "no picture after the terminal was given back");
+});
+
+test("does not draw a picture that no longer fits the video rectangle", async () => {
+  const inner = new FakeTerminal(80, 24);
+  const host = new PreviewHost(inner, { visible: () => true, rect: () => ({ x: 0, y: 2, w: 80, h: 11 }), screenLines: () => [] });
+  host.setFrame({ encoded: STUB_SIXEL, size: { width: 1800, height: 900 }, backend: "sixel" });
+  await tick();
+  assert.equal(sixelPlacements(inner.writes.join("")).length, 0, "a picture made for a bigger window would cover the chat and the prompt box");
+  host.setFrame({ encoded: STUB_SIXEL, size: { width: 400, height: 200 }, backend: "sixel" });
+  await tick();
+  assert.equal(sixelPlacements(inner.writes.join("")).length, 1, "one that fits is drawn");
+});

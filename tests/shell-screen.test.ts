@@ -263,3 +263,31 @@ test("Ctrl+Backspace and Ctrl+Delete delete a word at a time, and Ctrl+U and Ctr
     screen.stop();
   }
 });
+
+test("quitting gives the terminal back without printing the screen into the shell", async () => {
+  const { fake, screen } = await boot(80, 24);
+  state_addMessages(screen);
+  await fake.settle();
+  const mark = fake.mark();
+  screen.stop();
+  const written = fake.since(mark);
+  const leaving = written.lastIndexOf("\x1b[?1049l");
+  assert.ok(leaving >= 0, "the alternate screen is left");
+  assert.ok(!written.slice(leaving).includes("DumbEditor"), "nothing of the interface is left behind in the shell");
+});
+
+test("a long message at a normal size keeps the prompt box framed and the status row last", async () => {
+  const { fake, screen } = await boot(80, 24);
+  for (const character of "a long request that keeps going and going ".repeat(25)) fake.send(character);
+  await fake.settle();
+  const rows = fake.screen();
+  assert.ok(rows.some((line) => /^ {2}╭/.test(line)), "the top edge of the box is still there");
+  assert.ok(rows.some((line) => /^ {2}╰/.test(line)), "and so is the bottom edge");
+  assert.match(rows[23] ?? "", /● glm/, "the status row stays last");
+  assert.ok(rows.every((line) => line.length <= 80));
+  screen.stop();
+});
+
+function state_addMessages(screen: ShellScreen): void {
+  screen.transcript.sync([{ id: "x", role: "user", text: "hello", live: false }]);
+}

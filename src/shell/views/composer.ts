@@ -20,6 +20,8 @@ const PLACEHOLDER = "Describe an edit, or type / for commands";
 class StudioEditor extends Editor {
   title = "";
   tone: ComposerTone = "idle";
+  /** Most rows the whole box may take, borders included; the editor's own limit is a share of the terminal. */
+  maxRows: () => number = () => Number.MAX_SAFE_INTEGER;
   private above = 0;
   private below = 0;
 
@@ -33,7 +35,19 @@ class StudioEditor extends Editor {
     const bottom = lines.indexOf(BOTTOM_MARK);
     if (top < 0 || bottom < 0) return lines;
     const edge = this.tone === "idle" ? faint : warn;
-    const content = lines.slice(top + 1, bottom);
+    let content = lines.slice(top + 1, bottom);
+    // Keep the box inside the room the layout has left, with the cursor row in view, instead of letting the
+    // layout cut off its edges.
+    const cap = Math.max(1, this.maxRows() - 2);
+    let above = this.above;
+    let below = this.below;
+    if (content.length > cap) {
+      const cursorAt = Math.max(0, content.findIndex((line) => line.includes(CURSOR_MARKER) || line.includes("[7m")));
+      const start = Math.min(Math.max(0, cursorAt - cap + 1), content.length - cap);
+      above += start;
+      below += content.length - start - cap;
+      content = content.slice(start, start + cap);
+    }
     if (this.getText() === "" && content.length > 0) {
       const cursor = this.focused ? `${CURSOR_MARKER}\u001B[7m \u001B[0m` : " ";
       content[0] = fitLine(`${cursor}${faint(PLACEHOLDER)}`, inner);
@@ -42,9 +56,9 @@ class StudioEditor extends Editor {
     const boxWidth = width - MARGIN * 2;
     const rows = content.map((line, index) => `${outside}${edge("│")} ${index === 0 ? accent("❯") : " "} ${fitLine(line, inner)} ${edge("│")}`);
     return [
-      outside + this.frameEdge("╭", "╮", boxWidth, [this.title, this.above > 0 ? `↑ ${this.above} more` : ""].filter(Boolean).join(" · "), edge),
+      outside + this.frameEdge("╭", "╮", boxWidth, [this.title, above > 0 ? `↑ ${above} more` : ""].filter(Boolean).join(" · "), edge),
       ...rows,
-      outside + this.frameEdge("╰", "╯", boxWidth, this.below > 0 ? `↓ ${this.below} more` : "", edge),
+      outside + this.frameEdge("╰", "╯", boxWidth, below > 0 ? `↓ ${below} more` : "", edge),
       ...lines.slice(bottom + 1).map((line) => `${" ".repeat(LEFT + MARGIN)}${line}`),
     ];
   }
@@ -67,6 +81,8 @@ export interface ComposerOptions {
   /** Folder that `@file` completion starts from. */
   cwd: string;
   onSubmit(text: string): void;
+  /** Most rows the box may take, borders included, given what else is on screen. */
+  maxRows?: () => number;
 }
 
 /** The message box: pi-tui's multi-line editor with slash-command completion. It grows, then scrolls inside itself. */
@@ -80,6 +96,7 @@ export class Composer {
       selectList: { selectedPrefix: accent, selectedText: (text) => selected(accent(text)), description: dim, scrollInfo: dim, noMatch: dim },
     });
     this.editor = this.studio;
+    if (options.maxRows) this.studio.maxRows = options.maxRows;
     this.studio.setAutocompleteProvider(new CombinedAutocompleteProvider(
       options.commands.map((command) => ({ name: command.name.replace(/^\//, ""), description: `${command.usage}  ${command.description}` })),
       options.cwd,

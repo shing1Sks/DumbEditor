@@ -85,9 +85,21 @@ export function shortProjectName(name: string): string {
   return cut ? cut : name;
 }
 
+/**
+ * Remove escape sequences and control characters from text that did not come from us (model output, file names), so
+ * it cannot move the cursor, retitle the window or write to the clipboard. Line breaks and tabs stay.
+ */
+export function stripControls(text: string): string {
+  return text
+    .replace(/\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g, "")
+    .replace(/\u001B[P_^X][^\u001B]*\u001B\\/g, "")
+    .replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+}
+
 /** Collapse whitespace and cut a value to a number of characters, ending in an ellipsis when cut. */
 export function shorten(value: string, limit: number): string {
-  const clean = value.replace(/\s+/g, " ").trim();
+  const clean = stripControls(value).replace(/\s+/g, " ").trim();
   return clean.length <= limit ? clean : `${clean.slice(0, Math.max(1, limit - 1))}…`;
 }
 

@@ -1,6 +1,6 @@
 import { Container, ScrollView, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import type { TranscriptMessage } from "../state/shell-state.js";
-import { accent, bad, bold, faint, good, info, muted, styleMarkdown, warn } from "./style.js";
+import { accent, bad, bold, faint, good, info, muted, stripControls, styleMarkdown, warn } from "./style.js";
 
 /** Space kept free at the left and right of the conversation, in line with the header and the prompt box. */
 const MARGIN = "  ";
@@ -18,7 +18,7 @@ export class MessageView implements Component {
     const indent = " ".repeat(visibleWidth(gutter));
     const room = Math.max(4, width - indent.length - MARGIN.length * 2);
     // Tool steps start with their own symbol (▸ ✓ ✗); the gutter shows it, so the text is shown without it.
-    const text = message.label === "tool" ? message.text.replace(/^[▸✓✗]\s*/, "") : message.text;
+    const text = stripControls(message.label === "tool" ? message.text.replace(/^[▸✓✗]\s*/, "") : message.text);
     const output: string[] = [];
     for (const logical of text.split(/\r?\n/)) {
       const pieces = logical.trim() === "" ? [""] : wrapTextWithAnsi(style(styleMarkdown(logical)), room);

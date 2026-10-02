@@ -158,3 +158,17 @@ test("assets: lists newest selected, previews an image, plays sound, and hands t
   assert.match(screen(new AssetPanel(context, { assets: () => [], playing: () => false, togglePlay: () => undefined, stopPlay: () => undefined, typeText: () => undefined, close: () => undefined }).render(WIDTH)), /No project assets yet/);
   assert.ok(renders > 0, "panels ask the screen to redraw after a key");
 });
+
+test("a long question and a long approval summary are wrapped, not cut off", () => {
+  const question = "Which part should I cut: the slow introduction where the host explains the plan, or the long outro with the credits and the thanks to everyone?";
+  const choice = new ChoicePanel(context, { request: { id: "q", question, options: ["Intro", "Outro"], allowCustom: false }, answer: () => undefined });
+  const asked = screen(choice.render(100));
+  assert.match(asked, /thanks to everyone\?/, "the end of the question is visible");
+  const summary = "Generate a 30 second video of a golden retriever running along a beach at sunset with waves, seagulls and soft music playing in the background";
+  const approval = new ApprovalPanel(context, { request: approval_(summary), decide: () => undefined });
+  assert.match(screen(approval.render(100)), /soft music playing in the background/, "the whole summary is visible before the user decides");
+});
+
+function approval_(summary: string): ApprovalRequest {
+  return { type: "approval_request", id: "a", kind: "action", name: "generate_asset", summary, risk: "spend" };
+}

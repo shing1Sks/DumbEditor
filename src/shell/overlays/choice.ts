@@ -1,4 +1,4 @@
-import { Input, matchesKey } from "@earendil-works/pi-tui";
+import { Input, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ChoicePrompt } from "../state/shell-state.js";
 import { bold, accent, dim, inverse } from "../views/style.js";
 import { box, centered, isPrintable, Panel, wrapIndex, type PanelContext } from "./frame.js";
@@ -15,13 +15,15 @@ export class ChoicePanel extends Panel {
     const { request } = this.options;
     const panelWidth = Math.min(92, width - 4);
     this.custom.focused = this.focused && this.customActive;
+    // Inside the box: its two border columns and two columns of padding on each side.
+    const room = Math.max(10, panelWidth - 6);
     const lines = [
       bold(accent("Choose a direction")),
-      request.question,
+      ...wrapTextWithAnsi(request.question, room),
       "",
-      ...request.options.map((option, index) => {
+      ...request.options.flatMap((option, index) => {
         const active = !this.customActive && index === this.selected;
-        return active ? inverse(`› ${option}`) : `  ${option}`;
+        return wrapTextWithAnsi(`${active ? "›" : " "} ${option}`, room).map((line) => (active ? inverse(line) : line));
       }),
       ...(request.allowCustom ? [
         "",

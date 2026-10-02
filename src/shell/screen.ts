@@ -61,7 +61,12 @@ export function createShellScreen(options: ScreenOptions) {
   const bandRows = () => layout.bandRows;
 
   const transcript = new TranscriptView();
-  const composer = new Composer(tui, { commands: options.commands, cwd: options.cwd, onSubmit: (text) => hooks.onSubmit(text) });
+  const composer = new Composer(tui, {
+    commands: options.commands, cwd: options.cwd, onSubmit: (text) => hooks.onSubmit(text),
+    // Everything else on screen: header and spacer, the band with the play rows (not when the chat is expanded),
+    // the spacer above the box, the status row, and at least one row of chat.
+    maxRows: () => options.terminal.rows - (state.chatExpanded ? 4 : layout.bandRows + 6) - 1,
+  });
   const header = new HeaderView(state);
   const timeline = new TimelineView(state, () => ({ leftPad: layout.leftSidebarColumns + layout.gap, videoColumns: layout.videoColumns }));
   const controls = new ControlsView(state, () => backend);
@@ -179,7 +184,8 @@ export function createShellScreen(options: ScreenOptions) {
     /** Re-read the state and redraw, for example after changes made outside the state object. */
     refresh: sync,
     start(): void { tui.start(); },
-    stop(): void { unsubscribe(); tui.stop(); },
+    // Leave the screen alone on the way out: without this pi-tui prints a copy of the interface into the shell.
+    stop(): void { unsubscribe(); tui.stop({ preserveScreen: true }); },
   };
 }
 

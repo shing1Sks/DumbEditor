@@ -30,6 +30,7 @@ export class LayeredTerminal implements Terminal {
   private pending: string[] = [];
   private scheduled = false;
   private forced = true;
+  private stopped = false;
   private lastKey: string | null = null;
 
   constructor(private readonly inner: Terminal, private readonly hooks: LayerHooks) {}
@@ -46,7 +47,17 @@ export class LayeredTerminal implements Terminal {
       onInput(data);
     }, () => { this.forced = true; this.hooks.onResize?.(); onResize(); });
   }
-  stop(): void { this.inner.stop(); }
+  /**
+   * Give the terminal back. What pi-tui just wrote (leave the alternate screen, mouse off) must reach the terminal
+   * now: work queued for a microtask never runs while the process is exiting.
+   */
+  stop(): void {
+    this.stopped = true;
+    const data = this.pending.join("");
+    this.pending = [];
+    if (data) this.inner.write(data);
+    this.inner.stop();
+  }
   drainInput(maxMs?: number, idleMs?: number): Promise<void> { return this.inner.drainInput(maxMs, idleMs); }
   moveBy(lines: number): void { this.inner.moveBy(lines); }
   hideCursor(): void { this.inner.hideCursor(); }
@@ -61,6 +72,7 @@ export class LayeredTerminal implements Terminal {
   force(): void { this.forced = true; }
 
   write(data: string): void {
+    if (this.stopped) { this.inner.write(data); return; }
     this.pending.push(data);
     this.schedule();
   }
@@ -69,13 +81,14 @@ export class LayeredTerminal implements Terminal {
   paint(): void { this.schedule(); }
 
   private schedule(): void {
-    if (this.scheduled) return;
+    if (this.scheduled || this.stopped) return;
     this.scheduled = true;
     queueMicrotask(() => this.flush());
   }
 
   private flush(): void {
     this.scheduled = false;
+    if (this.stopped) return;
     const data = this.pending.join("");
     this.pending = [];
     const layer = this.hooks.layer();

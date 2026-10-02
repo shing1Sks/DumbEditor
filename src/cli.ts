@@ -87,6 +87,14 @@ const exitCode = await new Promise<number>((done) => {
   for (const [signal, code] of [["SIGTERM", 143], ["SIGHUP", 129]] as const) {
     process.once(signal, () => { app.dispose(); done(code); });
   }
+  // A crash must give the terminal back before it prints the error, or the message is lost in the alternate screen.
+  for (const event of ["uncaughtException", "unhandledRejection"] as const) {
+    process.once(event, (error: unknown) => {
+      app.dispose();
+      console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
+      done(1);
+    });
+  }
   app.start().catch((error: unknown) => {
     app.dispose();
     console.error(error instanceof Error ? error.message : String(error));

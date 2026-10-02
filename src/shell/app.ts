@@ -485,6 +485,8 @@ export class ShellApp implements CommandApp {
     if (this.disposed || !this.playback) return;
     const { state } = this;
     if (this.openPanel && state.overlay !== this.openPanel.kind) { this.openPanel.dispose?.(); this.openPanel = null; }
+    // A new version is being rendered: playing the old one alongside would only get in its way.
+    if (state.videoMutationActive && state.playing) { state.setPlaying(false); return; }
     const layout = this.screen.layout();
     const visible = state.overlay === null && !state.chatExpanded;
     const filePath = this.project?.current.filePath;

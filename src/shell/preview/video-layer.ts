@@ -10,6 +10,15 @@ export interface EncodedFrame {
   backend: PreviewBackend;
 }
 
+/** Whether the picture, drawn at its own size, fits inside the rectangle. After a resize the old picture is bigger than the new rectangle until a new one is made. */
+export function frameFits(frame: EncodedFrame, rect: CellRect): boolean {
+  const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
+  const cellHeight = positiveInteger(process.env.DUMBEDITOR_CELL_HEIGHT, 20);
+  const columns = frame.backend === "sixel" ? Math.ceil(frame.size.width / cellWidth) : frame.size.width;
+  const rows = frame.backend === "sixel" ? Math.ceil(frame.size.height / cellHeight) : Math.ceil(frame.size.height / 2);
+  return columns <= rect.w && rows <= rect.h;
+}
+
 /**
  * The escape sequences that paint one picture inside the video rectangle: save the cursor, move, draw, restore.
  * The cursor is never hidden, because the composer's cursor must stay visible.

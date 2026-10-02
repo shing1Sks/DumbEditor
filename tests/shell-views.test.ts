@@ -160,3 +160,11 @@ test("text helpers cut and join without exceeding the width", () => {
   assert.equal(spaceBetween("left", "right", 14), "left     right");
   assert.equal(visibleWidth(spaceBetween("a long left side", "right", 12)), 12);
 });
+
+test("escape sequences in text from a model or a file name never reach the terminal", () => {
+  const hostile = "hello \x1b]52;c;ZXZpbA==\x07world \x1b[31mred\x1b[0m\x07 end";
+  const lines = new MessageView({ id: "9", role: "assistant", text: hostile, label: "glm", live: false }).render(80);
+  assert.equal(plain(lines.join("\n")).trim(), "◆ hello world red end");
+  assert.ok(!lines.join("").includes("52;c;"), "the clipboard request is dropped, not just hidden");
+  assert.equal(shorten("name\x1b]0;title\x07.mp4", 40), "name.mp4");
+});
