@@ -9,14 +9,14 @@ const models = [
   { id: "openai/gpt-image", name: "OpenAI Image" },
 ];
 
-test("opens the model picker at capability selection with a provider-diverse base agent", () => {
+test("opens the model picker at capability selection with an OpenRouter-only base agent", () => {
   const picker = initialModelPicker();
   assert.equal(picker.step, "capability");
   assert.equal(picker.capability, "agent");
   assert.equal(picker.selectedIndex, 0);
   assert.equal(picker.query, "");
   assert.equal(MODEL_CAPABILITIES[0]?.label, "Base agent");
-  assert.deepEqual(capabilityDefinition("agent").providers, ["openai", "openrouter"]);
+  assert.deepEqual(capabilityDefinition("agent").providers, ["openrouter"]);
   assert.deepEqual(capabilityDefinition("video").providers, ["openrouter"]);
 });
 

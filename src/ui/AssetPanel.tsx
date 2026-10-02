@@ -16,7 +16,7 @@ export function AssetPanel(props: { assets: AgentAsset[]; selectedIndex: number;
     <Box width={props.width} height={props.height} borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="column">
       <Box justifyContent="space-between">
         <Text bold color="cyan">Assets</Text>
-        <Text dimColor>↑/↓ select · Space play · Shift+A/Esc close · type to chat</Text>
+        <Text dimColor>↑/↓ select · Space play · Ctrl+O/Esc close · type to chat</Text>
       </Box>
       {props.assets.length === 0 ? <Text dimColor>No project assets yet. Ask the editor agent to create an image, sound, video, or subtitles.</Text> : (
         <Box flexDirection="row" flexGrow={1}>

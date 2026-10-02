@@ -1,32 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { extname, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import type { ChildProcess } from "node:child_process";
 import type { ChatMessage, DirectEdit, MediaInfo, Selection } from "../types.js";
-import { AgentWorkspace, type AgentAsset } from "../core/agent-workspace.js";
-import type { ApprovalRequest, RequestApproval } from "../core/approval.js";
-import type { ChoiceRequest, RequestChoice } from "../core/choice.js";
-import { runEditorAgent } from "../core/agent-runtime.js";
+import type { AgentAsset } from "../core/agent-workspace.js";
+import { createEditorRegistry, directEditCall, type ActionContext } from "../core/actions/index.js";
+import { loadAgentSkills } from "../core/agent-skills.js";
 import { commandSuggestions, parseEditCommand } from "../core/commands.js";
 import { providerKeyStatus } from "../core/config.js";
-import { executeDirectEdit } from "../core/editor.js";
+import { Engine } from "../core/engine/engine.js";
+import type { ApprovalDecision, EngineEvent } from "../core/engine/events.js";
 import { EXPORT_FORMATS, EXPORT_PRESETS, exportDestination, exportVideo, type ExportFormat } from "../core/export.js";
-import { playAudio, probeMedia } from "../core/media.js";
+import { playAudio } from "../core/media.js";
 import { listMusicTracks, searchMusicTracks } from "../core/music-catalog.js";
 import { clearMusicSelection, MusicPreviewController, readMusicSelection, selectMusicTrack } from "../core/music.js";
 import { listProviderModels } from "../core/models.js";
+import { createEditorModels, fetchOpenRouterModelInfo, isCatalogModel } from "../core/pi/models.js";
 import { ProjectStore, type ProjectSummary } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
-import { DEFAULT_SETTINGS, readSettings, setAgentPermissionMode, setBaseAgentModel, setClaudeHarnessModel, setDefaultModel, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
+import { SessionStore } from "../core/session/session-store.js";
+import { DEFAULT_SETTINGS, readSettings, setAgentPermissionMode, setBaseAgentModel, setDefaultModel, setSpendCeiling, type DumbEditorSettings, type ModelProvider, type ModelSlot } from "../core/settings.js";
+import { EditorState } from "../core/state/editor-state.js";
 import { formatTime } from "../core/time.js";
 import { EMPTY_USAGE_SUMMARY, formatUsd, type UsageSummary } from "../core/usage.js";
 import { AssetPanel } from "./AssetPanel.js";
 import { ChatPanel } from "./ChatPanel.js";
-import { ApprovalPanel } from "./ApprovalPanel.js";
+import { ApprovalPanel, approvalDecision, approvalOptions, type ApprovalView } from "./ApprovalPanel.js";
 import { ChoicePanel, type ChoicePanelState } from "./ChoicePanel.js";
+import type { ChoiceRequest } from "../core/choice.js";
 import { Help } from "./Help.js";
 import { History } from "./History.js";
 import { InputPanel } from "./InputPanel.js";
+import { isBackspace, isFocusReport, playbackStart } from "./keys.js";
 import { editorLayout } from "./layout.js";
 import { ExportPanel, type ExportFocus, type ExportPanelState } from "./ExportPanel.js";
 import { capabilityDefinition, filteredPickerModels, initialModelPicker, MODEL_CAPABILITIES, ModelPanel, type ModelPickerState } from "./ModelPanel.js";
@@ -42,6 +47,8 @@ import { isVideoMutationStage } from "./work-state.js";
 type Overlay = "help" | "history" | "model" | "music" | "export" | "assets" | "projects" | "approval" | "choice" | null;
 interface LoaderState { source: string; stage: string }
 const LOADER_MARK = "◐";
+/** Commands that cannot disturb a running agent; everything else waits until it finishes or is stopped. */
+const SAFE_DURING_RUN = new Set(["/help", "/chat", "/status", "/clear", "/play", "/pause", "/quit", "/exit", "/permissions", "/budget", "/version", "/versions", "/assets"]);
 
 export function App({ initialPath }: { initialPath?: string }) {
   const { exit } = useApp();
@@ -58,6 +65,8 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [selection, setSelection] = useState<Selection>({ in: null, out: null });
   const [input, setInput] = useState("");
   const [inputCursor, setInputCursor] = useState(0);
+  const inputLengthRef = useRef(0);
+  inputLengthRef.current = input.length;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatScrollRows, setChatScrollRows] = useState(0);
@@ -70,18 +79,28 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [assetPlaying, setAssetPlaying] = useState(false);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectIndex, setProjectIndex] = useState(0);
-  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
-  const [approvalAllow, setApprovalAllow] = useState(false);
-  const approvalResolver = useRef<((allowed: boolean) => void) | null>(null);
-  const [choice, setChoice] = useState<ChoiceRequest | null>(null);
+  const [approval, setApproval] = useState<ApprovalView | null>(null);
+  const [approvalIndex, setApprovalIndex] = useState(0);
+  const [choice, setChoice] = useState<(ChoiceRequest & { id: string }) | null>(null);
   const [choicePanel, setChoicePanel] = useState<ChoicePanelState>({ selectedIndex: 0, customActive: false, customText: "", customCursor: 0 });
-  const choiceResolver = useRef<((answer: string | null) => void) | null>(null);
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [engine, setEngine] = useState<Engine | null>(null);
+  const [agentRunning, setAgentRunning] = useState(false);
+  const registry = useMemo(() => createEditorRegistry(), []);
+  const modelsRef = useRef<ReturnType<typeof createEditorModels> | null>(null);
+  const liveMessage = useRef<{ id: string; text: string; timer: NodeJS.Timeout | null } | null>(null);
   const [previewRefresh, setPreviewRefresh] = useState(0);
   const assetPreview = useRef<ChildProcess | null>(null);
   const [overlay, setOverlayState] = useState<Overlay>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [settings, setSettings] = useState<DumbEditorSettings>(() => structuredClone(DEFAULT_SETTINGS));
   const [settingsReady, setSettingsReady] = useState(false);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
+  const projectRef = useRef(project);
+  projectRef.current = project;
   const [modelPicker, setModelPicker] = useState<ModelPickerState>(initialModelPicker);
   const [modelOverlayReady, setModelOverlayReady] = useState(false);
   const modelRequest = useRef(0);
@@ -102,7 +121,8 @@ export function App({ initialPath }: { initialPath?: string }) {
     setOverlayState(next);
   }, []);
 
-  const busy = loader !== null;
+  // A running agent shows its stage in the header but must not block typing: text sent now steers it.
+  const busy = loader !== null && !agentRunning;
   const videoMutationActive = loader !== null && isVideoMutationStage(loader.stage);
   const previewBackend = useMemo(() => activePreviewBackend(), []);
   const inputMetrics = useMemo(() => inputViewport(input, inputCursor, Math.max(8, terminal.columns - 6)), [input, inputCursor, terminal.columns]);
@@ -110,7 +130,9 @@ export function App({ initialPath }: { initialPath?: string }) {
   const suggestions = useMemo(() => commandSuggestions(input), [input]);
   const musicTracks = useMemo(() => musicQuery.trim() ? searchMusicTracks(musicQuery) : listMusicTracks(), [musicQuery]);
   const currentFile = project?.current.filePath;
-  const agentModel = settingsReady ? settings.models[settings.agent.provider].text : "editor model";
+  const agentModel = settingsReady ? settings.models.openrouter.text : "editor model";
+  const agentModelRef = useRef(agentModel);
+  agentModelRef.current = agentModel;
   const controlsHint = terminal.columns >= 120
     ? `${previewBackend.toUpperCase()} · Ctrl+P play · ←/→ 5s · +/- volume · ↑/↓ chat · Ctrl+G focus`
     : "Ctrl+P play · +/- volume · ↑/↓ chat · Ctrl+G focus";
@@ -129,7 +151,7 @@ export function App({ initialPath }: { initialPath?: string }) {
 
   useEffect(() => { setSuggestionIndex(0); }, [input]);
   useEffect(() => { setChatScrollRows(0); }, [messages.length]);
-  useEffect(() => () => { musicPreview.current?.dispose(); terminateProcess(assetPreview.current); terminateRunningProcesses(); }, []);
+  useEffect(() => () => { engineRef.current?.abort(); musicPreview.current?.dispose(); terminateProcess(assetPreview.current); terminateRunningProcesses(); }, []);
   useEffect(() => {
     void readSettings()
       .then((value) => { setSettings(value); setSettingsReady(true); })
@@ -163,6 +185,21 @@ export function App({ initialPath }: { initialPath?: string }) {
       stdout.write("\u001B[?1004l");
     };
   }, [stdin, stdout]);
+
+  // Mirror what the user does into the shared editor state so the agent sees the same playhead and marks.
+  useEffect(() => { editor?.setPlayhead(currentTime); }, [currentTime, editor]);
+  useEffect(() => { editor?.setSelection(selection); }, [selection, editor]);
+  useEffect(() => {
+    if (!editor) return;
+    let activeVersion = editor.store.current.id;
+    return editor.subscribe(() => {
+      setMedia(editor.media); setUsage(editor.usage); setAssets([...editor.assets]); setRevision((value) => value + 1);
+      if (editor.store.current.id !== activeVersion) {
+        activeVersion = editor.store.current.id;
+        currentTimeRef.current = editor.playhead; setCurrentTime(editor.playhead); setSelection(editor.selection);
+      }
+    });
+  }, [editor]);
 
   const movePlayhead = useCallback((next: number) => {
     if (!media) return;
@@ -202,45 +239,141 @@ export function App({ initialPath }: { initialPath?: string }) {
     setAssetIndex(Math.max(0, assets.length - 1));
     setOverlay("assets");
   }, [assets.length, stopAssetPlayback]);
-  const requestApproval = useCallback<RequestApproval>((request) => new Promise<boolean>((resolve) => {
-    approvalResolver.current?.(false);
-    approvalResolver.current = resolve;
-    setApproval(request);
-    setApprovalAllow(false);
-    setOverlay("approval");
-  }), []);
-  const resolveApproval = useCallback((allowed: boolean) => {
-    const resolve = approvalResolver.current;
-    approvalResolver.current = null;
+  const resolveApproval = useCallback((decision: ApprovalDecision) => {
+    if (approval) engineRef.current?.resolveApproval(approval.id, decision);
     setApproval(null);
-    setApprovalAllow(false);
     setOverlay(null);
-    resolve?.(allowed);
-  }, []);
-  const requestChoice = useCallback<RequestChoice>((request) => new Promise<string | null>((resolve) => {
-    choiceResolver.current?.(null);
-    choiceResolver.current = resolve;
-    setChoice(request);
-    setChoicePanel({ selectedIndex: 0, customActive: false, customText: "", customCursor: 0 });
-    setOverlay("choice");
-  }), []);
+  }, [approval, setOverlay]);
   const resolveChoice = useCallback((answer: string | null) => {
-    const resolve = choiceResolver.current;
-    choiceResolver.current = null;
+    if (choice) engineRef.current?.resolveChoice(choice.id, answer);
     setChoice(null);
     setOverlay(null);
-    resolve?.(answer);
-  }, []);
+  }, [choice, setOverlay]);
 
-  const refreshProjectData = useCallback(async (store: ProjectStore) => {
-    const workspace = new AgentWorkspace(store.createAgentWorkspace());
-    const [nextAssets, nextUsage] = await Promise.all([workspace.assets(), store.usageSummary()]);
-    setAssets(nextAssets);
-    setUsage(nextUsage);
-    setAssetIndex((value) => Math.max(0, Math.min(value, nextAssets.length - 1)));
-  }, []);
+  /** Show the agent working: stream text, list tool calls, and surface approvals and choices. */
+  const handleEngineEvent = useCallback((event: EngineEvent) => {
+    const label = agentModelRef.current;
+    const flushLive = () => {
+      const live = liveMessage.current;
+      if (!live) return;
+      if (live.timer) { clearTimeout(live.timer); live.timer = null; }
+      setMessages((items) => items.map((item) => item.at === live.id ? { ...item, content: live.text } : item));
+    };
+    switch (event.type) {
+      case "run_start":
+        setAgentRunning(true); setLoader({ source: label, stage: "Thinking" });
+        break;
+      case "text_delta": {
+        let live = liveMessage.current;
+        if (!live) {
+          const id = `live-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          live = { id, text: "", timer: null };
+          liveMessage.current = live;
+          setMessages((items) => [...items, { role: "assistant", content: "", at: id, label }]);
+        }
+        live.text += event.text;
+        setLoader((current) => current?.stage === "Writing response" ? current : { source: label, stage: "Writing response" });
+        if (!live.timer) {
+          const target = live;
+          live.timer = setTimeout(() => {
+            target.timer = null;
+            setMessages((items) => items.map((item) => item.at === target.id ? { ...item, content: target.text } : item));
+            setChatScrollRows(0);
+          }, 80);
+        }
+        break;
+      }
+      case "tool_start":
+        flushLive(); liveMessage.current = null;
+        addUiMessage("assistant", `▸ ${event.summary}`, "tool");
+        setLoader({ source: event.name === "run_sandbox_script" ? "Sandbox" : label, stage: event.summary });
+        break;
+      case "tool_progress":
+        setLoader((current) => ({ source: current?.source ?? label, stage: event.stage }));
+        break;
+      case "tool_end":
+        addUiMessage("assistant", `${event.ok ? "✓" : "✗"} ${event.summary}`, "tool");
+        break;
+      case "approval_request":
+        setApproval(event); setApprovalIndex(approvalOptions(event).length - 1); setOverlay("approval");
+        break;
+      case "choice_request":
+        setChoice({ id: event.id, question: event.question, options: event.options, allowCustom: event.allowCustom });
+        setChoicePanel({ selectedIndex: 0, customActive: false, customText: "", customCursor: 0 });
+        setOverlay("choice");
+        break;
+      case "steer_queued":
+        setStatus("Queued · the agent will read it after its current step");
+        break;
+      case "steer_dropped": {
+        // The run ended before the agent read what was typed while it worked: give it back instead of losing it.
+        const text = event.texts.join(" ");
+        const base = inputLengthRef.current;
+        setInput((value) => (value ? `${value} ${text}` : text));
+        setInputCursor(base > 0 ? base + 1 + text.length : text.length);
+        addUiMessage("assistant", "The agent stopped before it read your queued message. It is back in the input box.", "editor");
+        break;
+      }
+      case "compaction":
+        if (event.phase === "start") setLoader((current) => ({ source: current?.source ?? label, stage: "Compacting conversation" }));
+        else if (event.tokensBefore !== undefined) addUiMessage("assistant", `Compacted earlier conversation (${event.tokensBefore} → ${event.tokensAfter ?? 0} tokens).`, "editor");
+        break;
+      case "error":
+        addUiMessage("assistant", event.message, "error");
+        break;
+      case "run_end": {
+        flushLive();
+        const live = liveMessage.current;
+        liveMessage.current = null;
+        setAgentRunning(false); setLoader(null); setApproval(null); setChoice(null);
+        setOverlayState((current) => current === "approval" || current === "choice" ? null : current);
+        if (event.reason === "done" && event.message) {
+          if (!live || live.text.trim() !== event.message.trim()) addUiMessage("assistant", event.message, label);
+          void projectRef.current?.addChat("assistant", event.message, label);
+        }
+        if (event.reason === "aborted") addUiMessage("assistant", "Stopped.", "editor");
+        if (event.reason === "budget") addUiMessage("assistant", "Stopped at the spend limit. Raise it with /budget.", "editor");
+        setStatus(event.reason === "done" ? `${label} · done` : event.reason === "error" ? `${label} request failed` : "Stopped");
+        break;
+      }
+      default:
+        break;
+    }
+  }, [addUiMessage, setOverlay]);
+  useEffect(() => (engine ? engine.on(handleEngineEvent) : undefined), [engine, handleEngineEvent]);
+
+  /** Build the agent for an open project, or null when no OpenRouter key is configured. */
+  const createEngine = useCallback(async (state: EditorState, chatSeed: readonly ChatMessage[]) => {
+    const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+    if (!apiKey) return null;
+    modelsRef.current ??= createEditorModels({ apiKey });
+    const modelId = settingsRef.current.models.openrouter.text;
+    // Models pi's catalog does not know yet still work: take their real limits and prices from OpenRouter.
+    const modelInfo = isCatalogModel(modelsRef.current, modelId) ? undefined : await fetchOpenRouterModelInfo(modelId);
+    try {
+      const created = await Engine.tryCreate({
+        state, registry, models: modelsRef.current, modelId, ...(modelInfo ? { modelInfo } : {}),
+        session: new SessionStore(join(state.store.snapshot.projectDir, "agent", "session.jsonl")),
+        getSettings: () => settingsRef.current, skills: await loadAgentSkills(), chatSeed,
+      });
+      if (created.error !== undefined) addUiMessage("assistant", `The agent could not start for this project: ${created.error}. Slash commands still work.`, "error");
+      return created.engine;
+    } catch (error) {
+      addUiMessage("assistant", `The agent could not start for this project: ${errorMessage(error)}. Slash commands still work.`, "error");
+      return null;
+    }
+  }, [addUiMessage, registry]);
+
+  const actionContext = useCallback((state: EditorState, request: string, onStage: (stage: string) => void): ActionContext => ({
+    state, settings: settingsRef.current, signal: new AbortController().signal, request,
+    progress: (update) => onStage(update.stage), requestChoice: async () => null,
+  }), []);
 
   const openVideo = useCallback(async (path: string, projectDirectory?: string) => {
+    if (engineRef.current?.running) {
+      addUiMessage("assistant", "The agent is working. Wait for it to finish, or press Esc to stop it, before opening another video.");
+      return;
+    }
     setLoader({ source: "Editor", stage: "Opening video" });
     setPlaying(false);
     try {
@@ -248,16 +381,19 @@ export function App({ initialPath }: { initialPath?: string }) {
         ? await ProjectStore.openProject(projectDirectory)
         : await ProjectStore.open(resolve(path));
       setLoader({ source: "Editor", stage: "Reading media details" });
-      const nextMedia = await probeMedia(store.current.filePath);
+      const state = await EditorState.open(store);
       const history = await store.chatHistory();
-      await Promise.all([refreshProjectData(store), store.register()]);
-      setProject(store); setRevision((value) => value + 1); setMedia(nextMedia); setMessages(history);
+      await store.register();
+      const nextEngine = await createEngine(state, history);
+      setProject(store); setEditor(state); setEngine(nextEngine); setRevision((value) => value + 1);
+      setMedia(state.media); setAssets([...state.assets]); setUsage(state.usage); setMessages(history);
       setSelection({ in: null, out: null }); currentTimeRef.current = 0; setCurrentTime(0);
       setStatus(`Opened ${store.name}`);
-      addUiMessage("assistant", `Opened ${store.name} · ${nextMedia.width}x${nextMedia.height} · ${formatTime(nextMedia.duration)}`, "editor");
+      addUiMessage("assistant", `Opened ${store.name} · ${state.media.width}x${state.media.height} · ${formatTime(state.media.duration)}`, "editor");
+      if (!nextEngine) addUiMessage("assistant", "Add an OpenRouter API key with dumbeditor setup to talk to the agent. Slash commands still work.", "editor");
     } catch (error) { addUiMessage("assistant", errorMessage(error)); setStatus("Open failed"); }
     finally { setLoader(null); }
-  }, [addUiMessage, refreshProjectData]);
+  }, [addUiMessage, createEngine]);
 
   const openProjectsBrowser = useCallback(async () => {
     setPlaying(false);
@@ -283,34 +419,40 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (initialPath) void openVideo(initialPath);
     else addUiMessage("assistant", "Open a video with /open <path>, or relaunch as: dumbeditor video.mp4");
   }, [initialPath, openVideo, addUiMessage]);
+  // ffplay cannot change volume while running, so a volume change restarts it. Debounce
+  // so a burst of +/- presses causes one restart instead of one gap per keypress.
+  const [audioVolume, setAudioVolume] = useState(volume);
+  useEffect(() => {
+    const timer = setTimeout(() => setAudioVolume(volume), 400);
+    return () => clearTimeout(timer);
+  }, [volume]);
   useEffect(() => {
     if (!currentFile || !media?.hasAudio || !playing || layout.playerRows === 0) return;
     let stopped = false;
-    const audio: ChildProcess | null = playAudio(currentFile, currentTimeRef.current, volume, (error) => {
+    const audio: ChildProcess | null = playAudio(currentFile, playbackStart(currentTimeRef.current, media.duration), audioVolume, (error) => {
       if (!stopped) setStatus(`Audio preview unavailable: ${error.message}`);
     });
     return () => { stopped = true; terminateProcess(audio); };
-  }, [currentFile, media, playing, layout.playerRows, volume]);
+  }, [currentFile, media, playing, layout.playerRows, audioVolume]);
 
   const applyEdit = useCallback(async (edit: DirectEdit, request: string, source: LoaderState["source"]) => {
-    if (!project) throw new Error("Open a video first with /open <path>.");
+    if (!editor) throw new Error("Open a video first with /open <path>.");
     setLoader({ source, stage: "Preparing edit" });
-    const result = await executeDirectEdit(project, edit, request, (stage) => setLoader({ source, stage }));
-    setMedia(result.media); setRevision((value) => value + 1); movePlayhead(0); setSelection({ in: null, out: null });
-    await answer(`${result.version.id} · ${result.version.action}`);
+    const { name, args } = directEditCall(edit);
+    const result = await registry.run(name, args, actionContext(editor, request, (stage) => setLoader({ source, stage })));
+    await answer(result.text);
     setStatus(`${source} · complete`);
-  }, [answer, movePlayhead, project]);
+  }, [actionContext, answer, editor, registry]);
 
   const changeVersion = useCallback(async (reference: string) => {
-    if (!project) return;
+    if (!editor) return;
     setLoader({ source: "Editor", stage: "Loading saved version" }); setPlaying(false);
     try {
-      const version = await project.revert(reference); const nextMedia = await probeMedia(version.filePath);
-      setMedia(nextMedia); setRevision((value) => value + 1); movePlayhead(0);
+      const version = await editor.revertTo(reference);
       await answer(`Now on ${version.id}: ${version.action}`); setStatus(`Current ${version.id}`);
     } catch (error) { await answer(errorMessage(error)); setStatus("Revert failed"); }
     finally { setLoader(null); }
-  }, [answer, movePlayhead, project]);
+  }, [answer, editor]);
 
   const openModelPicker = useCallback(() => {
     modelRequest.current += 1;
@@ -400,6 +542,10 @@ export function App({ initialPath }: { initialPath?: string }) {
         ? await setBaseAgentModel(modelPicker.provider, selected.id)
         : await setDefaultModel(modelPicker.provider, modelPicker.slot, selected.id);
       setSettings(next);
+      if (modelPicker.capability === "agent" && editor && !engineRef.current?.running) {
+        settingsRef.current = next;
+        setEngine(await createEngine(editor, []));
+      }
       setOverlay(null);
       setStatus(`${selected.id} selected`);
       await answer(modelPicker.capability === "agent"
@@ -410,7 +556,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     } finally {
       setLoader(null);
     }
-  }, [answer, loadModelChoices, modelPicker]);
+  }, [answer, createEngine, editor, loadModelChoices, modelPicker]);
 
   const backModelPicker = useCallback(() => {
     modelRequest.current += 1;
@@ -434,6 +580,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     const space = line.indexOf(" ");
     const command = (space === -1 ? line : line.slice(0, space)).toLowerCase();
     const argument = unquoteArgument(space === -1 ? "" : line.slice(space + 1).trim());
+    if (agentRunning && !SAFE_DURING_RUN.has(command)) { await answer("The agent is working. Wait for it to finish, or press Esc to stop it."); return; }
     if (command === "/quit" || command === "/exit") { exit(); return; }
     if (command === "/help") { setOverlay("help"); return; }
     if (command === "/clear") { setMessages([]); setOverlay(null); return; }
@@ -452,11 +599,25 @@ export function App({ initialPath }: { initialPath?: string }) {
       await answer(`Agent permission mode set to ${argument}.`);
       return;
     }
-    if (command === "/harness-model") {
-      if (!argument) { await answer(`Claude harness model: ${settings.agent.claudeModel}`); return; }
-      const next = await setClaudeHarnessModel(argument);
+    if (command === "/budget") {
+      if (!argument) {
+        const limit = settings.agent.spendCeilingUsd;
+        await answer(limit > 0
+          ? `Each agent run pauses to ask at ${formatUsd(limit)}. Use /budget <USD> to change it, or /budget 0 to turn it off.`
+          : "There is no per-run spend limit. Use /budget <USD> to set one.");
+        return;
+      }
+      const next = await setSpendCeiling(Number(argument));
       setSettings(next);
-      await answer(`Claude harness model set to ${next.agent.claudeModel}.`);
+      await answer(next.agent.spendCeilingUsd > 0 ? `Per-run spend limit set to ${formatUsd(next.agent.spendCeilingUsd)}.` : "Per-run spend limit turned off.");
+      return;
+    }
+    if (command === "/compact") {
+      const current = engineRef.current;
+      if (!current) { await answer("Open a video, with an OpenRouter key configured, first."); return; }
+      setLoader({ source: "Editor", stage: "Compacting conversation" });
+      try { await answer(await current.compact() ? "Compacted the earlier conversation." : "There is nothing to compact yet."); }
+      finally { setLoader(null); }
       return;
     }
     if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
@@ -493,7 +654,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (command === "/revert") { if (!argument) { await answer("Usage: /revert <VERSION>"); return; } await changeVersion(argument); return; }
     if (command === "/export") { openExportPanel(argument); return; }
     await answer(`Unknown command ${command}. Type / to see commands.`);
-  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openProjectsBrowser, openVideo, project, selection, settings.agent.claudeModel, settings.agent.permissionMode, toggleChatFocus]);
+  }, [answer, applyEdit, changeVersion, exit, media, openAssetBrowser, openExportPanel, openModelPicker, openMusicBrowser, openProjectsBrowser, openVideo, project, selection, settings.agent.permissionMode, settings.agent.spendCeilingUsd, agentRunning, toggleChatFocus]);
 
   const submit = useCallback(async () => {
     const request = input.trim();
@@ -505,45 +666,37 @@ export function App({ initialPath }: { initialPath?: string }) {
     }
     setInput(""); setInputCursor(0); setOverlay(null); addUiMessage("user", request);
     if (request.startsWith("/")) { try { await handleCommand(request); } catch (error) { await answer(errorMessage(error)); } return; }
-    if (!project || !media) { await answer("Open a video first with /open <path>."); return; }
+    if (!project || !media || !editor) { await answer("Open a video first with /open <path>."); return; }
+    const agent = engineRef.current;
+    if (!agent) { await answer("Add an OpenRouter API key with dumbeditor setup to talk to the agent."); return; }
 
-    setLoader({ source: agentModel, stage: "Understanding your request" });
+    // Text sent while the agent is running steers it; otherwise it starts a run.
+    editor.setPlayhead(currentTimeRef.current);
+    editor.setSelection(selection);
     try {
-      await project.nameFromFirstRequest(request);
-      await project.register();
-      await project.addChat("user", request);
-      const before = project.current.id;
-      const result = await runEditorAgent({
-        request, store: project, media, currentTime: currentTimeRef.current, selection,
-        requestApproval, requestChoice,
-        onCost: (kind, costUsd) => setUsage((current) => ({
-          totalUsd: current.totalUsd + costUsd,
-          lunaUsd: current.lunaUsd + (kind === "luna" ? costUsd : 0),
-          assetUsd: current.assetUsd + (kind === "asset" ? costUsd : 0),
-          harnessUsd: current.harnessUsd + (kind === "harness" ? costUsd : 0),
-          entries: current.entries + 1,
-        })),
-        onStage: (stage) => setLoader(stage.startsWith("SANDBOX · ")
-          ? { source: "Sandbox", stage: stage.slice("SANDBOX · ".length) }
-          : { source: agentModel, stage }),
-      });
-      await refreshProjectData(project);
-      if (result.versionId !== before) {
-        setMedia(result.media); setRevision((value) => value + 1); movePlayhead(0); setSelection({ in: null, out: null });
+      if (!agent.running) {
+        await project.nameFromFirstRequest(request);
+        await project.register();
       }
-      setLoader({ source: agentModel, stage: "Writing response" });
-      await answer(result.message, result.model); setStatus(`${result.model} · ${result.toolCalls} tools`);
+      await project.addChat("user", request);
+      agent.submit(request);
     } catch (error) { await answer(errorMessage(error)); setStatus(`${agentModel} request failed`); }
-    finally { setLoader(null); }
-  }, [addUiMessage, agentModel, answer, busy, handleCommand, input, media, movePlayhead, project, refreshProjectData, requestApproval, requestChoice, selection, suggestionIndex, suggestions]);
+  }, [addUiMessage, agentModel, answer, busy, editor, handleCommand, input, media, project, selection, setOverlay, suggestionIndex, suggestions]);
 
   useInput((character, key) => {
-    if (key.ctrl && character === "c") { exit(); return; }
-    if (character.includes("\u001B[I") || character.includes("\u001B[O")) return;
+    if (key.ctrl && character === "c") {
+      if (engineRef.current?.running) engineRef.current.abort();
+      else exit();
+      return;
+    }
+    if (isFocusReport(character)) return;
     if (overlay === "approval") {
-      if (key.escape) { resolveApproval(false); return; }
-      if (key.leftArrow || key.rightArrow || key.tab) { setApprovalAllow((value) => !value); return; }
-      if (key.return) { resolveApproval(approvalAllow); return; }
+      if (!approval) return;
+      const options = approvalOptions(approval);
+      if (key.escape) { resolveApproval("deny"); return; }
+      if (key.leftArrow || key.upArrow) { setApprovalIndex((value) => (value - 1 + options.length) % options.length); return; }
+      if (key.rightArrow || key.downArrow || key.tab) { setApprovalIndex((value) => (value + 1) % options.length); return; }
+      if (key.return) { resolveApproval(approvalDecision(approval, approvalIndex)); return; }
       return;
     }
     if (overlay === "choice" && choice) {
@@ -568,16 +721,12 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (choicePanel.customActive) {
         if (key.leftArrow) { setChoicePanel((current) => ({ ...current, customCursor: Math.max(0, current.customCursor - 1) })); return; }
         if (key.rightArrow) { setChoicePanel((current) => ({ ...current, customCursor: Math.min(current.customText.length, current.customCursor + 1) })); return; }
-        if (key.backspace) {
+        if (isBackspace(key)) {
           setChoicePanel((current) => current.customCursor === 0 ? current : {
             ...current,
             customText: current.customText.slice(0, current.customCursor - 1) + current.customText.slice(current.customCursor),
             customCursor: current.customCursor - 1,
           });
-          return;
-        }
-        if (key.delete) {
-          setChoicePanel((current) => ({ ...current, customText: current.customText.slice(0, current.customCursor) + current.customText.slice(current.customCursor + 1) }));
           return;
         }
         if (character && !key.ctrl && !key.meta && !key.tab) {
@@ -611,7 +760,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       return;
     }
     if (overlay === "assets") {
-      if (key.escape || (key.shift && character.toLowerCase() === "a")) { closeAssetBrowser(); return; }
+      if (key.escape || (key.ctrl && character === "o")) { closeAssetBrowser(); return; }
       if (key.upArrow || key.downArrow) {
         terminateProcess(assetPreview.current);
         assetPreview.current = null;
@@ -677,16 +826,12 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (key.ctrl && character === "u") { setExportPanel((current) => ({ ...current, destination: "", cursor: 0 })); return; }
       if (key.leftArrow) { setExportPanel((current) => ({ ...current, cursor: Math.max(0, current.cursor - 1) })); return; }
       if (key.rightArrow) { setExportPanel((current) => ({ ...current, cursor: Math.min(current.destination.length, current.cursor + 1) })); return; }
-      if (key.backspace) {
+      if (isBackspace(key)) {
         setExportPanel((current) => current.cursor === 0 ? current : {
           ...current,
           destination: current.destination.slice(0, current.cursor - 1) + current.destination.slice(current.cursor),
           cursor: current.cursor - 1,
         });
-        return;
-      }
-      if (key.delete) {
-        setExportPanel((current) => ({ ...current, destination: current.destination.slice(0, current.cursor) + current.destination.slice(current.cursor + 1) }));
         return;
       }
       if (character && !key.ctrl && !key.meta && !key.tab) {
@@ -728,9 +873,9 @@ export function App({ initialPath }: { initialPath?: string }) {
         }).catch((error) => setStatus(errorMessage(error)));
         return;
       }
-      if (key.delete) { void clearMusicSelection().then(() => { setSelectedMusicId(null); setStatus("Background music selection cleared"); }); return; }
+      if (key.ctrl && character === "k") { void clearMusicSelection().then(() => { setSelectedMusicId(null); setStatus("Background music selection cleared"); }); return; }
       if (key.ctrl && character === "u") { setMusicQuery(""); setMusicIndex(0); return; }
-      if (key.backspace) { setMusicQuery((value) => value.slice(0, -1)); setMusicIndex(0); return; }
+      if (isBackspace(key)) { setMusicQuery((value) => value.slice(0, -1)); setMusicIndex(0); return; }
       if (character && !key.ctrl && !key.meta && !key.tab) { setMusicQuery((value) => value + character.replace(/[\r\n]+/g, " ")); setMusicIndex(0); }
       return;
     }
@@ -751,7 +896,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       }
       if (key.return || key.rightArrow) { void chooseModelPickerItem(); return; }
       if (modelPicker.step === "models") {
-        if (key.backspace || key.delete) {
+        if (isBackspace(key)) {
           setModelPicker((current) => ({ ...current, query: current.query.slice(0, -1), selectedIndex: 0 }));
           return;
         }
@@ -770,6 +915,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (key.escape) {
       if (overlay) setOverlay(null);
       else if (chatFocused) setChatFocused(false);
+      else if (agentRunning && input.length === 0) engineRef.current?.abort();
       else { setInput(""); setInputCursor(0); }
       return;
     }
@@ -791,7 +937,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       if (character === "-") { setVolume((value) => Math.max(0, value - 5)); return; }
       return;
     }
-    if (key.shift && character.toLowerCase() === "a") {
+    if (key.ctrl && character === "o") {
       openAssetBrowser();
       return;
     }
@@ -803,8 +949,7 @@ export function App({ initialPath }: { initialPath?: string }) {
     if (key.return) { void submit(); return; }
     if (key.ctrl && character === "a") { setInputCursor(0); return; }
     if (key.ctrl && character === "e") { setInputCursor(input.length); return; }
-    if (key.backspace) { if (inputCursor > 0) { setInput((value) => value.slice(0, inputCursor - 1) + value.slice(inputCursor)); setInputCursor((value) => value - 1); } return; }
-    if (key.delete) { if (inputCursor < input.length) setInput((value) => value.slice(0, inputCursor) + value.slice(inputCursor + 1)); return; }
+    if (isBackspace(key)) { if (inputCursor > 0) { setInput((value) => value.slice(0, inputCursor - 1) + value.slice(inputCursor)); setInputCursor((value) => value - 1); } return; }
     if (key.leftArrow) { if (input.length > 0) setInputCursor((value) => Math.max(0, value - 1)); else { setPlaying(false); movePlayhead(currentTimeRef.current - 5); } return; }
     if (key.rightArrow) { if (input.length > 0) setInputCursor((value) => Math.min(input.length, value + 1)); else { setPlaying(false); movePlayhead(currentTimeRef.current + 5); } return; }
     if (key.upArrow) {
@@ -884,7 +1029,7 @@ export function App({ initialPath }: { initialPath?: string }) {
           : overlay === "assets" ? <AssetPanel assets={assets} selectedIndex={assetIndex} playing={assetPlaying}
               onPlaybackEnd={stopAssetPlayback}
               width={terminal.columns - 2} height={layout.playerRows} />
-          : overlay === "approval" && approval ? <ApprovalPanel request={approval} allowSelected={approvalAllow}
+          : overlay === "approval" && approval ? <ApprovalPanel request={approval} options={approvalOptions(approval)} selectedIndex={approvalIndex}
               width={terminal.columns - 2} height={layout.playerRows} />
           : overlay === "choice" && choice ? <ChoicePanel request={choice} state={choicePanel}
               width={terminal.columns - 2} height={layout.playerRows} />
@@ -921,8 +1066,8 @@ export function App({ initialPath }: { initialPath?: string }) {
         : <InputPanel value={input} cursor={inputCursor} width={terminal.columns - 2} busy={busy} />}
       <Box height={1} minHeight={1} overflow="hidden">
         <Text dimColor wrap="truncate-end">{loader
-          ? `${loader.source} is working · ${agentModel} ${formatUsd(usage.lunaUsd)} · Harness ${formatUsd(usage.harnessUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · ${videoMutationActive ? "video updating · ↑/↓ chat" : "↑/↓ chat · ←/→ seek · Ctrl+P play"}`
-          : `${status} · ${agentModel} ${formatUsd(usage.lunaUsd)} · Harness ${formatUsd(usage.harnessUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · Enter to send · Ctrl+C to quit`}</Text>
+          ? `${loader.source} is working · ${agentModel} ${formatUsd(usage.lunaUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · ${agentRunning ? "Enter steers · Esc stops" : videoMutationActive ? "video updating · ↑/↓ chat" : "↑/↓ chat · ←/→ seek · Ctrl+P play"}`
+          : `${status} · ${agentModel} ${formatUsd(usage.lunaUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)} · Enter to send · Ctrl+C to quit`}</Text>
       </Box>
     </Box>
   );

@@ -10,6 +10,7 @@ import {
   type PreviewBackend,
 } from "../core/media.js";
 import { formatTime } from "../core/time.js";
+import { playbackStart } from "./keys.js";
 import { clearRetainedTerminalLayer, retainTerminalLayer, writeTerminalLayer } from "./terminal-layers.js";
 
 interface PendingFrame {
@@ -168,7 +169,7 @@ export const VideoSurface = React.memo(function VideoSurface(props: {
       };
     }
 
-    const start = props.time >= props.media.duration - 0.05 ? 0 : props.time;
+    const start = playbackStart(props.time, props.media.duration);
     const preview = streamRawPreview({
       filePath: props.filePath,
       start,

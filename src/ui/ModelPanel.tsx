@@ -14,7 +14,7 @@ interface CapabilityDefinition {
 }
 
 export const MODEL_CAPABILITIES: CapabilityDefinition[] = [
-  { id: "agent", label: "Base agent", detail: "plans edits and runs tools", slot: "text", providers: ["openai", "openrouter"] },
+  { id: "agent", label: "Base agent", detail: "plans edits and runs tools", slot: "text", providers: ["openrouter"] },
   { id: "image", label: "Image", detail: "generated overlays and artwork", slot: "image", providers: ["openrouter"] },
   { id: "audio", label: "Audio", detail: "generated sound and speech", slot: "audio", providers: ["openrouter"] },
   { id: "music", label: "Music", detail: "generated background music", slot: "music", providers: ["openrouter"] },

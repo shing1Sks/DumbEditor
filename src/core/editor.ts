@@ -10,6 +10,7 @@ export async function executeDirectEdit(
   edit: DirectEdit,
   request: string,
   onStage?: (stage: string) => void,
+  signal?: AbortSignal,
 ): Promise<{ version: VersionEntry; media: MediaInfo }> {
   const input = store.current.filePath;
   const media = await probeMedia(input);
@@ -18,7 +19,7 @@ export async function executeDirectEdit(
 
   try {
     onStage?.("Rendering with FFmpeg");
-    await runProcess("ffmpeg", args, { timeoutMs: 30 * 60_000, maxOutputBytes: 8_000_000 });
+    await runProcess("ffmpeg", args, { timeoutMs: 30 * 60_000, maxOutputBytes: 8_000_000, ...(signal ? { signal } : {}) });
     onStage?.("Checking rendered video");
     const outputMedia = await probeMedia(output);
     onStage?.("Saving new version");

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnvironment, runSetup } from "./core/config.js";
+import { terminateRunningProcesses } from "./core/process.js";
 import { ProjectStore } from "./core/project.js";
 import { markWelcomeShown } from "./core/settings.js";
 import { App } from "./ui/App.js";
@@ -80,7 +81,7 @@ let screenRestored = false;
 const restoreScreen = () => {
   if (!useAlternateScreen || screenRestored) return;
   screenRestored = true;
-  process.stdout.write("\u001B[0m\u001B[?25h\u001B[?1049l");
+  process.stdout.write("\u001B[?1004l\u001B[0m\u001B[?25h\u001B[?1049l");
 };
 
 if (useAlternateScreen) process.stdout.write("\u001B[?1049h\u001B[2J\u001B[H\u001B[?25l");
@@ -89,6 +90,15 @@ const app = render(<App initialPath={initialPath} />, {
   stdout: createLayeredStdout(process.stdout),
 });
 process.once("exit", restoreScreen);
+// Closing the terminal tab sends SIGHUP and `kill` sends SIGTERM; neither runs "exit"
+// handlers, so stop child processes and restore the screen before leaving.
+for (const [signal, code] of [["SIGTERM", 143], ["SIGHUP", 129]] as const) {
+  process.once(signal, () => {
+    terminateRunningProcesses();
+    restoreScreen();
+    process.exit(code);
+  });
+}
 try {
   await app.waitUntilExit();
 } finally {
@@ -152,9 +162,9 @@ Controls:
   [ / ]          Mark selection in / out
   Tab            Complete the selected slash command
   Enter          Send a request or complete a slash command
-  Esc            Minimize chat, close a panel, or clear the input
-  Ctrl+C         Quit
-  Shift+A        Open or close the project asset browser
+  Esc            Stop the agent, minimize chat, close a panel, or clear the input
+  Ctrl+C         Stop the agent while it works; otherwise quit
+  Ctrl+O         Open or close the project asset browser
 
 Editor commands:
   /clip-remove <FROM> <TO> [FROM TO ...]
@@ -173,7 +183,8 @@ Editor commands:
   /bg-music [query]  Search, preview, and select open-license music
   /assets            Browse generated and project assets
   /permissions [mode] Show or set ask/auto approval mode
-  /harness-model [id] Show or set the optional Claude harness model
+  /budget [USD]       Show or set the per-run spend limit (0 turns it off)
+  /compact            Summarize earlier conversation to free context
   /status            Show project details
   /play              Play the preview
   /pause             Pause the preview

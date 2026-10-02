@@ -43,6 +43,8 @@ export interface ProjectState {
   updatedAt?: string;
   /** Number of rendered edit versions retained in addition to the source. */
   versionLimit?: number;
+  /** Versions the agent has seen; retention pruning never removes them (newest 20 kept). */
+  pinnedVersionIds?: string[];
   versions: VersionEntry[];
 }
 

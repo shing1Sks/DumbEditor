@@ -1,3 +1,8 @@
+---
+name: video-editing
+description: Edit the active video with validated FFmpeg tools, inspect frames, and review or revert versions.
+---
+
 # Video editing
 
 Use DumbEditor's validated FFmpeg tools for project mutations. Inspect frames when the request depends on visible content, then apply the smallest sequence of edits that completes the request.

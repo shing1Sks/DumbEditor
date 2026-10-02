@@ -12,6 +12,7 @@ const AGENT_CONTEXT_FILE = "context.jsonl";
 const USAGE_FILE = "usage.jsonl";
 const PROJECT_REGISTRY_FILE = "projects.json";
 export const DEFAULT_VERSION_LIMIT = 5;
+export const MAX_PINNED_VERSIONS = 20;
 
 export interface ProjectSummary {
   name: string;
@@ -212,16 +213,35 @@ export class ProjectStore {
     return limit;
   }
 
-  async revert(reference: string): Promise<VersionEntry> {
+  /** Resolve "3", "v3", "v0003" or a unique id prefix to one retained version. */
+  resolveVersion(reference: string): VersionEntry {
     const normalized = reference.trim().toLowerCase();
     const numeric = /^\d+$/.test(normalized) ? `v${normalized.padStart(4, "0")}` : normalized;
     const matches = this.state.versions.filter((version) => version.id.toLowerCase().startsWith(numeric));
     if (matches.length !== 1) throw new Error(matches.length === 0 ? `Version ${reference} was not found` : `Version ${reference} is ambiguous`);
     const version = matches[0];
     if (!version) throw new Error(`Version ${reference} was not found`);
+    return version;
+  }
+
+  async revert(reference: string): Promise<VersionEntry> {
+    const version = this.resolveVersion(reference);
     this.state.currentVersionId = version.id;
     await this.save();
     return version;
+  }
+
+  get pinnedVersionIds(): readonly string[] {
+    return this.state.pinnedVersionIds ?? [];
+  }
+
+  /** Protect a version the agent has seen from retention pruning. The newest MAX_PINNED_VERSIONS stay pinned. */
+  async pinVersion(id: string): Promise<void> {
+    if (!this.state.versions.some((version) => version.id === id)) return;
+    const pinned = (this.state.pinnedVersionIds ?? []).filter((item) => item !== id);
+    pinned.push(id);
+    this.state.pinnedVersionIds = pinned.slice(-MAX_PINNED_VERSIONS);
+    await this.save();
   }
 
   history(limit = 8): VersionEntry[] {
@@ -306,6 +326,7 @@ export class ProjectStore {
 
     const keepIds = new Set<string>();
     if (this.state.currentVersionId !== original.id) keepIds.add(this.state.currentVersionId);
+    for (const id of this.state.pinnedVersionIds ?? []) if (id !== original.id) keepIds.add(id);
     for (let index = edits.length - 1; index >= 0 && keepIds.size < this.versionLimit; index -= 1) {
       const version = edits[index];
       if (version) keepIds.add(version.id);

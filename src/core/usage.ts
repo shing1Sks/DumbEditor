@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-export type UsageKind = "luna" | "asset" | "harness";
+/** "luna" and "harness" appear only in ledgers written before the agent core rewrite. */
+export type UsageKind = "agent" | "luna" | "asset" | "harness";
 
 export interface UsageEntry {
   id: string;
@@ -33,7 +34,7 @@ export function createUsageEntry(entry: Omit<UsageEntry, "id" | "at">): UsageEnt
 }
 
 export function summarizeUsage(entries: UsageEntry[]): UsageSummary {
-  const lunaUsd = entries.filter((entry) => entry.kind === "luna").reduce((sum, entry) => sum + entry.costUsd, 0);
+  const lunaUsd = entries.filter((entry) => entry.kind === "luna" || entry.kind === "agent").reduce((sum, entry) => sum + entry.costUsd, 0);
   const assetUsd = entries.filter((entry) => entry.kind === "asset").reduce((sum, entry) => sum + entry.costUsd, 0);
   const harnessUsd = entries.filter((entry) => entry.kind === "harness").reduce((sum, entry) => sum + entry.costUsd, 0);
   return { totalUsd: lunaUsd + assetUsd + harnessUsd, lunaUsd, assetUsd, harnessUsd, entries: entries.length };
@@ -52,7 +53,7 @@ export function isUsageEntry(value: unknown): value is UsageEntry {
   const entry = value as Partial<UsageEntry>;
   return typeof entry.id === "string"
     && typeof entry.at === "string"
-    && (entry.kind === "luna" || entry.kind === "asset" || entry.kind === "harness")
+    && (entry.kind === "agent" || entry.kind === "luna" || entry.kind === "asset" || entry.kind === "harness")
     && ["openai", "openrouter", "anthropic", "local"].includes(entry.provider ?? "")
     && typeof entry.model === "string"
     && typeof entry.label === "string"

@@ -5,7 +5,7 @@ description: Find, generate, preview, license, and mix speech, sound, or backgro
 
 # Audio and music
 
-Use `search_music_catalog` for free background tracks. Every bundled catalog record includes its source, license URL, and required attribution. `/bg-music` lets the user search, preview, stop, and persist a selection before asking Luna to mix it.
+Use `search_music_catalog` for free background tracks. Every bundled catalog record includes its source, license URL, and required attribution. `/bg-music` lets the user search, preview, stop, and persist a selection before asking the agent to mix it.
 
 For mixing:
 
