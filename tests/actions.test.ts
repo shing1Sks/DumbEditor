@@ -56,7 +56,7 @@ test("slash commands and agent tools call the same action with the same argument
   }
 });
 
-test("an edit action commits a version, pins it, resets the playhead and updates the state description", { timeout: 90_000 }, async () => {
+test("an edit action commits a version, resets the playhead and updates the state description, but pins nothing", { timeout: 90_000 }, async () => {
   const project = await makeProject();
   try {
     const registry = createEditorRegistry();
@@ -69,7 +69,7 @@ test("an edit action commits a version, pins it, resets the playhead and updates
     assert.ok(project.state.revision > before);
     assert.equal(project.state.playhead, 0);
     assert.deepEqual(project.state.selection, { in: null, out: null });
-    assert.deepEqual([...project.store.pinnedVersionIds], ["v0001"]);
+    assert.deepEqual([...project.store.pinnedVersionIds], [], "edits made without the agent must not pin, or retention would silently stop working");
     const described = project.state.describe().body;
     assert.match(described, /Active version: v0001 \(parent v0000\)/);
     assert.match(described, /Playhead: 0\.0s/);

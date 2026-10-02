@@ -51,22 +51,73 @@ export interface OpenRouterModelOptions {
   baseUrl?: string;
   /** Extra routing prefs merged over `{ require_parameters: true }`. */
   routing?: OpenRouterRouting;
+  /** What OpenRouter's model list says about this model; used only when pi's catalog does not know the id. */
+  info?: OpenRouterModelInfo;
+}
+
+/** The parts of an OpenRouter model list entry the engine needs. Prices are dollars per million tokens. */
+export interface OpenRouterModelInfo {
+  contextWindow: number;
+  maxTokens: number;
+  reasoning: boolean;
+  image: boolean;
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+}
+
+const perMillion = (price: unknown): number => {
+  const value = Number(price);
+  return Number.isFinite(value) && value > 0 ? Number((value * 1_000_000).toFixed(6)) : 0;
+};
+
+/** Read one entry of `GET /api/v1/models` (shape checked against the live list). */
+export function parseOpenRouterModelInfo(entry: unknown): OpenRouterModelInfo | undefined {
+  if (typeof entry !== "object" || entry === null) return undefined;
+  const value = entry as {
+    context_length?: unknown; architecture?: { input_modalities?: unknown }; pricing?: Record<string, unknown>;
+    top_provider?: { max_completion_tokens?: unknown }; supported_parameters?: unknown;
+  };
+  if (typeof value.context_length !== "number" || !(value.context_length > 0)) return undefined;
+  const maxCompletion = value.top_provider?.max_completion_tokens;
+  const modalities = value.architecture?.input_modalities;
+  const parameters = value.supported_parameters;
+  return {
+    contextWindow: value.context_length,
+    maxTokens: typeof maxCompletion === "number" && maxCompletion > 0 ? maxCompletion : Math.min(16_384, value.context_length),
+    reasoning: Array.isArray(parameters) && parameters.includes("reasoning"),
+    image: Array.isArray(modalities) && modalities.includes("image"),
+    cost: {
+      input: perMillion(value.pricing?.prompt), output: perMillion(value.pricing?.completion),
+      cacheRead: perMillion(value.pricing?.input_cache_read), cacheWrite: perMillion(value.pricing?.input_cache_write),
+    },
+  };
+}
+
+/** Look one model up in OpenRouter's public list. Never throws: any failure means "no extra information". */
+export async function fetchOpenRouterModelInfo(id: string, fetchImpl: typeof fetch = fetch): Promise<OpenRouterModelInfo | undefined> {
+  try {
+    const response = await fetchImpl(`${OPENROUTER_OPENAI_BASE_URL}/models`, { signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) return undefined;
+    const body = await response.json() as { data?: Array<{ id?: unknown }> };
+    return parseOpenRouterModelInfo(body.data?.find((entry) => entry.id === id));
+  } catch {
+    return undefined;
+  }
 }
 
 /** Placeholder literal for an OpenRouter model id that is not in pi's generated catalog yet. */
-function unknownOpenRouterModel(id: string): Model<"openai-completions"> {
+function unknownOpenRouterModel(id: string, info?: OpenRouterModelInfo): Model<"openai-completions"> {
   return {
     id,
     name: id,
     api: "openai-completions",
     provider: OPENROUTER_PROVIDER_ID,
     baseUrl: OPENROUTER_OPENAI_BASE_URL,
-    reasoning: false,
-    input: ["text", "image"],
-    // $/million tokens. Unknown pricing: zero. Real cost comes from OpenRouter (see cost.ts).
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128_000,
-    maxTokens: 16_384,
+    reasoning: info?.reasoning ?? false,
+    input: info && !info.image ? ["text"] : ["text", "image"],
+    // $/million tokens. Without list data: zero; the real cost comes from OpenRouter itself (see cost.ts).
+    cost: info?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: info?.contextWindow ?? 128_000,
+    maxTokens: info?.maxTokens ?? 16_384,
     // Same compat the catalog gives openai-completions models on OpenRouter.
     compat: { thinkingFormat: "openrouter", sendSessionAffinityHeaders: true },
   };
@@ -82,7 +133,7 @@ function unknownOpenRouterModel(id: string): Model<"openai-completions"> {
  * (api "anthropic-messages") ignore it. Use `withOpenRouterRoutingPayload` for those if you need it.
  */
 export function openRouterModel(models: Models, id: string, opts: OpenRouterModelOptions = {}): Model<Api> {
-  const base: Model<Api> = models.getModel(OPENROUTER_PROVIDER_ID, id) ?? unknownOpenRouterModel(id);
+  const base: Model<Api> = models.getModel(OPENROUTER_PROVIDER_ID, id) ?? unknownOpenRouterModel(id, opts.info);
   const compat = (base.compat ?? {}) as Record<string, unknown>;
   const previousRouting = (compat.openRouterRouting ?? {}) as OpenRouterRouting;
   return {

@@ -56,3 +56,12 @@ test("ignores a truncated final line and other unreadable lines", async () => {
     assert.deepEqual((await store.load()).map(textOf), ["kept"]);
   });
 });
+
+test("a message appended after a truncated final line is not glued onto it", async () => {
+  await withStore(async (store, path) => {
+    await store.appendMessage(user("kept", 1));
+    await appendFile(path, "{\"type\":\"message\",\"message\":{\"role\":\"us", "utf8");
+    await store.appendMessage(user("after the crash", 2));
+    assert.deepEqual((await store.load()).map(textOf), ["kept", "after the crash"]);
+  });
+});

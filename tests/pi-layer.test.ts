@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeContext, validateToolArguments, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { createCostTracker } from "../src/core/pi/cost.js";
-import { createEditorModels, createStreamFn, mergeStreamOptions, openRouterModel } from "../src/core/pi/models.js";
+import { createEditorModels, createStreamFn, fetchOpenRouterModelInfo, mergeStreamOptions, openRouterModel, parseOpenRouterModelInfo } from "../src/core/pi/models.js";
 import { toolFromJsonSchema } from "../src/core/pi/tools.js";
 import { makeFaux } from "./helpers/faux.js";
 
@@ -71,4 +71,31 @@ test("strict tools reject arguments pi would otherwise coerce", () => {
   assert.equal(validateToolArguments(lenient, toolCall({ count: null })).count, 0, "pi coerces null to 0 by default");
   assert.throws(() => strict.prepareArguments?.({ count: null }), /Invalid arguments for tool "t"/);
   assert.deepEqual(strict.prepareArguments?.({ count: 2 }), { count: 2 });
+});
+
+const LIVE_ENTRY = {
+  id: "vendor/brand-new-model",
+  context_length: 1_050_000,
+  architecture: { input_modalities: ["file", "image", "text"] },
+  pricing: { prompt: "0.0000001", completion: "0.0000005", input_cache_read: "0.00000001", input_cache_write: "0.000000125" },
+  top_provider: { max_completion_tokens: 128_000 },
+  supported_parameters: ["max_tokens", "reasoning", "tools"],
+};
+
+test("reads context window, limits, reasoning and prices from an OpenRouter model list entry", () => {
+  const info = parseOpenRouterModelInfo(LIVE_ENTRY);
+  assert.deepEqual(info, { contextWindow: 1_050_000, maxTokens: 128_000, reasoning: true, image: true, cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 } });
+  assert.equal(parseOpenRouterModelInfo({ id: "x" }), undefined, "an entry without a context window tells us nothing");
+  const built = openRouterModel(createEditorModels({ apiKey: "k" }), "vendor/brand-new-model", { info: info! });
+  assert.equal(built.contextWindow, 1_050_000);
+  assert.equal(built.reasoning, true);
+  assert.equal(built.cost.output, 0.5);
+});
+
+test("finds one model in the OpenRouter list and gives up quietly on any failure", async () => {
+  const listing = (body: unknown, ok = true) => (async () => ({ ok, json: async () => body })) as unknown as typeof fetch;
+  assert.equal((await fetchOpenRouterModelInfo("vendor/brand-new-model", listing({ data: [{ id: "other/model" }, LIVE_ENTRY] })))?.contextWindow, 1_050_000);
+  assert.equal(await fetchOpenRouterModelInfo("vendor/missing", listing({ data: [LIVE_ENTRY] })), undefined);
+  assert.equal(await fetchOpenRouterModelInfo("vendor/brand-new-model", listing({}, false)), undefined);
+  assert.equal(await fetchOpenRouterModelInfo("vendor/brand-new-model", (async () => { throw new Error("offline"); }) as unknown as typeof fetch), undefined);
 });

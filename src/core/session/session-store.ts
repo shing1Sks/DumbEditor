@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
@@ -51,7 +51,27 @@ export class SessionStore {
 
   private async append(line: SessionLine): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
-    await appendFile(this.path, `${JSON.stringify(line)}\n`, "utf8");
+    // A crash can leave a half-written last line; start on a fresh line so the new entry stays readable.
+    const prefix = (await this.endsMidLine()) ? "\n" : "";
+    await appendFile(this.path, `${prefix}${JSON.stringify(line)}\n`, "utf8");
+  }
+
+  private async endsMidLine(): Promise<boolean> {
+    let handle;
+    try {
+      handle = await open(this.path, "r");
+    } catch {
+      return false;
+    }
+    try {
+      const { size } = await handle.stat();
+      if (size === 0) return false;
+      const last = Buffer.alloc(1);
+      await handle.read(last, 0, 1, size - 1);
+      return last[0] !== 0x0a;
+    } finally {
+      await handle.close();
+    }
   }
 }
 

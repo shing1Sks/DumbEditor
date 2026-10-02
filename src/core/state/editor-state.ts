@@ -68,7 +68,6 @@ export class EditorState {
     this.mediaInfo = await probeMedia(this.store.current.filePath);
     this.playheadSeconds = 0;
     this.marks = { in: null, out: null };
-    await this.store.pinVersion(this.store.current.id);
     await this.reloadAssetsAndUsage();
     this.bump();
   }

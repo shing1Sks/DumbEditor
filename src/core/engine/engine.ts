@@ -21,7 +21,7 @@ import type { ChoiceRequest } from "../choice.js";
 import { createCostTracker, type CostTracker } from "../pi/cost.js";
 import { compact, estimateContextTokens, NothingToCompactError, shouldCompact, type CompactionResult } from "../pi/compaction.js";
 import { createEditorStateSync } from "../pi/editor-state-sync.js";
-import { createStreamFn, EDITOR_STREAM_DEFAULTS, openRouterModel } from "../pi/models.js";
+import { createStreamFn, EDITOR_STREAM_DEFAULTS, openRouterModel, type OpenRouterModelInfo } from "../pi/models.js";
 import { toolFromJsonSchema } from "../pi/tools.js";
 import type { SessionStore } from "../session/session-store.js";
 import type { DumbEditorSettings } from "../settings.js";
@@ -54,6 +54,8 @@ export interface EngineOptions {
   stallMs?: number;
   /** Tokens of newest conversation kept verbatim when compacting. */
   keepRecentTokens?: number;
+  /** OpenRouter's list entry for `modelId`, for models pi's catalog does not know yet (context window, prices, reasoning). */
+  modelInfo?: OpenRouterModelInfo;
   /** Test seams: a prebuilt model, stream function and cost source (for example pi's faux provider). */
   model?: Model<Api>;
   streamFn?: StreamFn;
@@ -69,7 +71,8 @@ interface RunState {
   id: string;
   request: string;
   controller: AbortController;
-  costUsd: number;
+  /** The project's total spend when the run began; everything recorded since then belongs to this run. */
+  startUsageUsd: number;
   ceilingUsd: number;
   nudges: number;
   mutatedSinceAudit: boolean;
@@ -111,8 +114,17 @@ export class Engine {
     return new Engine(options, messages);
   }
 
+  /** Like `create`, but explains a failure (for example an unreadable session file) instead of throwing. */
+  static async tryCreate(options: EngineOptions): Promise<{ engine: Engine; error?: undefined } | { engine: null; error: string }> {
+    try {
+      return { engine: await Engine.create(options) };
+    } catch (error) {
+      return { engine: null, error: errorText(error) };
+    }
+  }
+
   private constructor(private readonly options: EngineOptions, messages: AgentMessage[]) {
-    this.model = options.model ?? openRouterModel(options.models, options.modelId);
+    this.model = options.model ?? openRouterModel(options.models, options.modelId, options.modelInfo ? { info: options.modelInfo } : {});
     this.tracker = options.tracker ?? createCostTracker();
     const streamFn = options.streamFn
       ?? createStreamFn(options.models, { ...EDITOR_STREAM_DEFAULTS, onProviderStreamEvent: this.tracker.onProviderStreamEvent });
@@ -212,7 +224,7 @@ export class Engine {
       id: randomUUID(),
       request: text,
       controller: new AbortController(),
-      costUsd: 0,
+      startUsageUsd: this.options.state.usage.totalUsd,
       ceilingUsd: ceilingOf(settings),
       nudges: 0,
       mutatedSinceAudit: false,
@@ -227,7 +239,10 @@ export class Engine {
         const result = await this.compactTranscript(this.agent.state.messages, run.controller.signal);
         if (result) this.agent.state.messages = result.messages;
       }
-      if (!run.controller.signal.aborted) await this.agent.prompt(this.sync.wrapPrompt(text));
+      if (!run.controller.signal.aborted) {
+        await this.pinVersion(this.options.state.store.current.id);
+        await this.agent.prompt(this.sync.wrapPrompt(text));
+      }
     } catch (error) {
       run.failed = true;
       this.emit({ type: "error", message: errorText(error), retryable: true });
@@ -255,6 +270,7 @@ export class Engine {
       this.emit({ type: "error", message: last.errorMessage ?? "The model request failed.", retryable: true });
     }
     this.run = null;
+    if (reason !== "done" && leftover.length > 0) this.emit({ type: "steer_dropped", texts: leftover });
     this.emit({ type: "run_end", reason, message: reason === "done" && last ? textOf(last) : "" });
     // Text typed after the loop's last steering check would otherwise vanish: run it as a follow-up.
     if (reason === "done" && leftover.length > 0) this.submit(leftover.join("\n\n"));
@@ -387,20 +403,23 @@ export class Engine {
   private async recordTurnCost(run: RunState, message: AssistantMessage): Promise<void> {
     const cost = this.tracker.takeCost(message);
     if (!cost || (cost.costUsd === 0 && message.usage.totalTokens === 0)) return;
-    run.costUsd += cost.costUsd;
     await this.options.state.recordUsage({
       kind: "agent", provider: "openrouter", model: this.options.modelId, label: run.request.slice(0, 160),
       costUsd: cost.costUsd, estimated: cost.estimated,
       inputTokens: message.usage.input, cachedInputTokens: message.usage.cacheRead,
       cacheWriteTokens: message.usage.cacheWrite, outputTokens: message.usage.output,
     });
-    this.emit({ type: "usage", runCostUsd: run.costUsd, estimated: cost.estimated });
+    this.emit({ type: "usage", runCostUsd: this.spentThisRun(run), estimated: cost.estimated });
   }
 
   private async beforeToolCall(context: BeforeToolCallContext, signal?: AbortSignal): Promise<BeforeToolCallResult | undefined> {
     const name = context.toolCall.name;
     const risk = this.safeRisk(name, context.args);
     if (risk === "read" || risk === "edit") return undefined;
+    // Paid actions count toward the run's limit, so check it before each one, whatever the permission mode.
+    if (risk === "spend" && this.run && !(await this.withinBudget(this.run, signal))) {
+      return { block: true, reason: "The run stopped at its spend limit." };
+    }
     if (this.options.getSettings().agent.permissionMode === "auto" || this.sessionAllowed.has(name)) return undefined;
     const decision = await this.askApproval({
       kind: "action", callId: context.toolCall.id, name,
@@ -439,10 +458,11 @@ export class Engine {
   }
 
   private async withinBudget(run: RunState, signal?: AbortSignal): Promise<boolean> {
-    if (run.costUsd < run.ceilingUsd) return true;
+    const spent = this.spentThisRun(run);
+    if (spent < run.ceilingUsd) return true;
     const decision = await this.askApproval({
       kind: "budget", risk: "budget",
-      summary: `This run has spent ${formatUsd(run.costUsd)}, over its ${formatUsd(run.ceilingUsd)} limit. Continue?`,
+      summary: `This run has spent ${formatUsd(spent)}, over its ${formatUsd(run.ceilingUsd)} limit. Continue?`,
     }, signal);
     if (decision === "deny") {
       run.budgetStopped = true;
@@ -451,6 +471,16 @@ export class Engine {
     }
     run.ceilingUsd += ceilingOf(this.options.getSettings());
     return true;
+  }
+
+  /** Model turns, compaction and paid actions all land in the project's usage ledger, so one number covers them. */
+  private spentThisRun(run: RunState): number {
+    return Math.max(0, this.options.state.usage.totalUsd - run.startUsageUsd);
+  }
+
+  /** Versions the agent has seen are kept past retention so it can still compare with or revert to them. */
+  private async pinVersion(id: string): Promise<void> {
+    await this.options.state.store.pinVersion(id);
   }
 
   private async compactTranscript(messages: readonly AgentMessage[], signal?: AbortSignal): Promise<CompactionResult | undefined> {
@@ -503,7 +533,9 @@ export class Engine {
           content: [{ type: "text", text: update.stage }],
           details: { summary: update.stage, stage: update.stage, ...(update.fraction === undefined ? {} : { fraction: update.fraction }) } as ToolDetails,
         });
-        return toToolResult(await this.options.registry.run(action.name, args, this.contextFor(signal, progress)));
+        const result = await this.options.registry.run(action.name, args, this.contextFor(signal, progress));
+        if (result.versionId) await this.pinVersion(result.versionId);
+        return toToolResult(result);
       },
     });
   }

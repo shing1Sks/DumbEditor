@@ -15,7 +15,7 @@ import { playAudio } from "../core/media.js";
 import { listMusicTracks, searchMusicTracks } from "../core/music-catalog.js";
 import { clearMusicSelection, MusicPreviewController, readMusicSelection, selectMusicTrack } from "../core/music.js";
 import { listProviderModels } from "../core/models.js";
-import { createEditorModels } from "../core/pi/models.js";
+import { createEditorModels, fetchOpenRouterModelInfo, isCatalogModel } from "../core/pi/models.js";
 import { ProjectStore, type ProjectSummary } from "../core/project.js";
 import { terminateProcess, terminateRunningProcesses } from "../core/process.js";
 import { SessionStore } from "../core/session/session-store.js";
@@ -65,6 +65,8 @@ export function App({ initialPath }: { initialPath?: string }) {
   const [selection, setSelection] = useState<Selection>({ in: null, out: null });
   const [input, setInput] = useState("");
   const [inputCursor, setInputCursor] = useState(0);
+  const inputLengthRef = useRef(0);
+  inputLengthRef.current = input.length;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatScrollRows, setChatScrollRows] = useState(0);
@@ -303,6 +305,15 @@ export function App({ initialPath }: { initialPath?: string }) {
       case "steer_queued":
         setStatus("Queued · the agent will read it after its current step");
         break;
+      case "steer_dropped": {
+        // The run ended before the agent read what was typed while it worked: give it back instead of losing it.
+        const text = event.texts.join(" ");
+        const base = inputLengthRef.current;
+        setInput((value) => (value ? `${value} ${text}` : text));
+        setInputCursor(base > 0 ? base + 1 + text.length : text.length);
+        addUiMessage("assistant", "The agent stopped before it read your queued message. It is back in the input box.", "editor");
+        break;
+      }
       case "compaction":
         if (event.phase === "start") setLoader((current) => ({ source: current?.source ?? label, stage: "Compacting conversation" }));
         else if (event.tokensBefore !== undefined) addUiMessage("assistant", `Compacted earlier conversation (${event.tokensBefore} → ${event.tokensAfter ?? 0} tokens).`, "editor");
@@ -336,12 +347,22 @@ export function App({ initialPath }: { initialPath?: string }) {
     const apiKey = process.env.OPENROUTER_API_KEY?.trim();
     if (!apiKey) return null;
     modelsRef.current ??= createEditorModels({ apiKey });
-    return Engine.create({
-      state, registry, models: modelsRef.current, modelId: settingsRef.current.models.openrouter.text,
-      session: new SessionStore(join(state.store.snapshot.projectDir, "agent", "session.jsonl")),
-      getSettings: () => settingsRef.current, skills: await loadAgentSkills(), chatSeed,
-    });
-  }, [registry]);
+    const modelId = settingsRef.current.models.openrouter.text;
+    // Models pi's catalog does not know yet still work: take their real limits and prices from OpenRouter.
+    const modelInfo = isCatalogModel(modelsRef.current, modelId) ? undefined : await fetchOpenRouterModelInfo(modelId);
+    try {
+      const created = await Engine.tryCreate({
+        state, registry, models: modelsRef.current, modelId, ...(modelInfo ? { modelInfo } : {}),
+        session: new SessionStore(join(state.store.snapshot.projectDir, "agent", "session.jsonl")),
+        getSettings: () => settingsRef.current, skills: await loadAgentSkills(), chatSeed,
+      });
+      if (created.error !== undefined) addUiMessage("assistant", `The agent could not start for this project: ${created.error}. Slash commands still work.`, "error");
+      return created.engine;
+    } catch (error) {
+      addUiMessage("assistant", `The agent could not start for this project: ${errorMessage(error)}. Slash commands still work.`, "error");
+      return null;
+    }
+  }, [addUiMessage, registry]);
 
   const actionContext = useCallback((state: EditorState, request: string, onStage: (stage: string) => void): ActionContext => ({
     state, settings: settingsRef.current, signal: new AbortController().signal, request,

@@ -5,7 +5,7 @@ import type { Agent } from "@earendil-works/pi-agent-core";
 import {
   createAssistantMessageEventStream, fauxAssistantMessage, type AssistantMessage, type Model, type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { createEditorRegistry } from "../src/core/actions/index.js";
+import { createEditorRegistry, type ActionRegistry } from "../src/core/actions/index.js";
 import { Engine } from "../src/core/engine/engine.js";
 import type { EngineEvent } from "../src/core/engine/events.js";
 import { AUDIT_NUDGE } from "../src/core/engine/prompt.js";
@@ -13,6 +13,7 @@ import type { CostTracker } from "../src/core/pi/cost.js";
 import { createStreamFn } from "../src/core/pi/models.js";
 import { SessionStore } from "../src/core/session/session-store.js";
 import { DEFAULT_SETTINGS, type DumbEditorSettings } from "../src/core/settings.js";
+import { actionContext } from "./helpers/actions.js";
 import { call, makeFaux, say, toolUse } from "./helpers/faux.js";
 import { makeProject } from "./helpers/project.js";
 
@@ -24,6 +25,7 @@ interface HarnessOptions {
   stallMs?: number;
   keepRecentTokens?: number;
   contextWindow?: number;
+  registry?: ActionRegistry;
 }
 
 async function harness(options: HarnessOptions = {}) {
@@ -35,7 +37,7 @@ async function harness(options: HarnessOptions = {}) {
   Object.assign(settings.agent, options.agent);
   const session = new SessionStore(join(project.directory, "agent", "session.jsonl"));
   const engineOptions = {
-    state: project.state, registry: createEditorRegistry(), session, models, modelId: "faux", model,
+    state: project.state, registry: options.registry ?? createEditorRegistry(), session, models, modelId: "faux", model,
     streamFn: createStreamFn(models), getSettings: () => settings,
     ...(options.tracker ? { tracker: options.tracker } : {}),
     ...(options.stallMs ? { stallMs: options.stallMs } : {}),
@@ -454,5 +456,68 @@ test("hands back text typed as a run ended instead of dropping it, but not audit
     internals.agent.steer({ role: "user", content: AUDIT_NUDGE, timestamp: 2 });
     assert.deepEqual(internals.takeLeftoverSteering(), ["late message"]);
     assert.equal(internals.agent.hasQueuedMessages(), false);
+  } finally { await h.cleanup(); }
+});
+
+test("hands queued text back to the client when the run ends without finishing", { timeout: 60_000 }, async () => {
+  const h = await harness();
+  try {
+    h.faux.setResponses([() => {
+      h.engine.submit("make it red instead");
+      return fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider exploded" });
+    }]);
+    const end = await h.ask("hi");
+    assert.equal(end.reason, "error");
+    const dropped = h.events.find((event) => event.type === "steer_dropped");
+    assert.deepEqual(dropped && dropped.type === "steer_dropped" ? dropped.texts : null, ["make it red instead"]);
+  } finally { await h.cleanup(); }
+});
+
+test("pins the versions the agent works with, whoever made them", { timeout: 90_000 }, async () => {
+  const h = await harness();
+  try {
+    await h.engineOptions.registry.run("remove_ranges", { ranges: [{ start: 3, end: 4 }] }, actionContext(h.project.state));
+    assert.deepEqual([...h.project.store.pinnedVersionIds], [], "a version made by a slash command is not pinned yet");
+    h.faux.setResponses([say("hi"), toolUse(call("remove_ranges", { ranges: [{ start: 0, end: 0.5 }] }, "c1")), say("done"), toolUse(AUDIT), say("audited")]);
+    await h.ask("hello");
+    assert.deepEqual([...h.project.store.pinnedVersionIds], ["v0001"], "the agent was told about the active version");
+    await h.ask("trim the start");
+    assert.ok(h.project.store.pinnedVersionIds.includes("v0002"), "a version the agent made is pinned");
+  } finally { await h.cleanup(); }
+});
+
+test("counts paid actions toward the run's spend limit and pauses before the next one, even in auto mode", { timeout: 60_000 }, async () => {
+  const registry = createEditorRegistry();
+  let paid = 0;
+  registry.register({
+    name: "paid_probe", description: "test", schema: { type: "object", properties: {}, required: [], additionalProperties: false }, risk: "spend",
+    run: async (_args, ctx) => {
+      paid += 1;
+      await ctx.state.recordUsage({ kind: "asset", provider: "openrouter", model: "m", label: "probe", costUsd: 2, estimated: false });
+      return { text: "paid" };
+    },
+  });
+  const h = await harness({ agent: { spendCeilingUsd: 1, permissionMode: "auto" }, registry });
+  try {
+    h.faux.setResponses([toolUse(call("paid_probe", {}, "p1"), call("paid_probe", {}, "p2")), say("never")]);
+    const done = h.runEnd();
+    h.engine.submit("generate twice");
+    const request = await h.next("approval_request");
+    assert.equal(request.type === "approval_request" ? request.kind : "", "budget");
+    assert.equal(paid, 1, "the second paid action waits for an answer");
+    if (request.type === "approval_request") h.engine.resolveApproval(request.id, "deny");
+    assert.equal((await done).reason, "budget");
+    assert.equal(paid, 1);
+  } finally { await h.cleanup(); }
+});
+
+test("explains why the agent could not start instead of throwing", { timeout: 60_000 }, async () => {
+  const h = await harness();
+  try {
+    const result = await Engine.tryCreate({ ...h.engineOptions, session: new SessionStore(h.project.directory) });
+    assert.equal(result.engine, null);
+    assert.ok(result.error && result.error.length > 0);
+    const fine = await Engine.tryCreate(h.engineOptions);
+    assert.ok(fine.engine);
   } finally { await h.cleanup(); }
 });

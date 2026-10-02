@@ -13,6 +13,8 @@ export type EngineEvent =
   | { type: "approval_request"; id: string; kind: "action" | "budget"; callId?: string; name?: string; summary: string; risk: Risk | "budget"; args?: unknown }
   | { type: "choice_request"; id: string; question: string; options: string[]; allowCustom: boolean }
   | { type: "steer_queued"; text: string }
+  /** The run ended before it read these queued messages; the client should give them back to the user. */
+  | { type: "steer_dropped"; texts: string[] }
   | { type: "usage"; runCostUsd: number; estimated: boolean }
   | { type: "compaction"; phase: "start" | "end"; tokensBefore?: number; tokensAfter?: number }
   | { type: "error"; message: string; retryable: boolean }
