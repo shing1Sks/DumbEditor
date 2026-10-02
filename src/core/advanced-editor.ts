@@ -67,6 +67,7 @@ export async function executeAdvancedEdit(
   edit: AdvancedEdit,
   request: string,
   onStage?: (stage: string) => void,
+  signal?: AbortSignal,
 ): Promise<AdvancedEditResult> {
   const input = store.current.filePath;
   const media = await probeMedia(input);
@@ -83,6 +84,7 @@ export async function executeAdvancedEdit(
       cwd: workspace,
       timeoutMs: 30 * 60_000,
       maxOutputBytes: 8_000_000,
+      ...(signal ? { signal } : {}),
     });
     onStage?.("Checking rendered video");
     const outputMedia = await probeMedia(output);
