@@ -34,12 +34,16 @@ git() { command git -c safe.directory='*' "$@"; }
 6. **Switching the base-agent model keeps the chat history** (the old code dropped it); this closes a deferred minor from the step 2 review.
 7. **Mouse capture stays at pi-tui's default** (wheel scrolling, drag-to-select with copy). The manual checklist asks the author to confirm it does not get in the way; making it opt-in is a one-line change if it does.
 
+8. **The look** (chosen by the author on 2026-10-03 from three mock-ups, "Quiet studio", then adjusted after a trial run): a tinted header bar like a breadcrumb, soft borderless sidebar panels with padding, one transport row (play state, time, bar with in/out marks, volume), gutter symbols in the chat instead of names, a rounded prompt box with a title and a hint, a blank row under the header and above the prompt box, and a status bar with model, spend and mode. The video takes at most 60% of the screen height and the conversation gets the rest.
+9. **Pause and play stay in step**: `streamRawPreview` no longer uses FFmpeg's `-re`, and `ffplay` plays with `-vn` (Task 4).
+
 ## Global Constraints
 
 - Node `>=22.19.0` (unchanged); `@earendil-works/pi-tui` pinned at exactly `1.0.0`; `@xterm/headless` is a dev dependency only.
 - pi-tui is imported only from `src/shell/` (and `tests/`); nothing in `src/core/` may import it.
 - The step 2 engine, actions registry, session store and event stream are not modified.
 - The video band height depends only on the terminal size and the video's shape, never on the composer.
+- The video band never takes more than 60% of the terminal height, and the screen keeps a blank row under the header and above the prompt box.
 - The picture layer never hides the cursor, and is re-sent only when the picture, its rectangle, or the text under it changed, or after a clear, a resize, or a regained window focus.
 - Every panel renders exactly `bandRows` rows of exactly the band's width.
 - Style: 2-space indent, ESM imports with `.js` specifiers, and the repo's strict compiler options (`exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`).
@@ -53,9 +57,10 @@ Inputs most likely to hurt a real user that the spec does not spell out. Each ha
 2. **Awkward window sizes and resizing**, including very small and very large terminals. Tests: `resizing keeps the layout consistent...`, `a very small terminal still draws every row within its width...` (Task 5).
 3. **A panel opened over a playing or streaming video**, and the picture coming back once. Tests: `a panel replaces the band, takes the keys, hides the video, and returns it once when it closes` (Task 5), `the preview host paints each new picture...` (Task 4).
 4. **The window losing and regaining focus** (Windows Terminal can drop Sixel images). Test: `draws the picture again when the window regains focus, and still passes the key on` (Task 4).
-5. **Quitting in the middle of playback or a run**: no frames, sound or keys after `dispose`, children stopped. Test: `disposing the app while the video plays stops the picture, the sound and every key` (Task 8).
-6. **A slow, failing or out-of-order model catalog, and a failed save** in the model picker. Tests: `model picker: a failed catalog or save shows the reason...`, `model picker ignores a slow answer after the user went back` (Task 7).
-7. **Typing while an export runs, and text the agent never read.** Tests: `while an export runs typing is blocked but the play keys still work` (Task 5), `queued text the agent never read goes back to the composer` (Task 2).
+5. **Pausing and playing again** must resume the picture and the sound at the same point, quickly, even in a video with long gaps between keyframes. Tests: `starts at the seek point right away, then delivers frames in real time` and `plays only the sound...` (Task 4).
+6. **Quitting in the middle of playback or a run**: no frames, sound or keys after `dispose`, children stopped. Test: `disposing the app while the video plays stops the picture, the sound and every key` (Task 8).
+7. **A slow, failing or out-of-order model catalog, and a failed save** in the model picker. Tests: `model picker: a failed catalog or save shows the reason...`, `model picker ignores a slow answer after the user went back` (Task 7).
+8. **Typing while an export runs, and text the agent never read.** Tests: `while an export runs typing is blocked but the play keys still work` (Task 5), `queued text the agent never read goes back to the composer` (Task 2).
 
 ---
 ## File map
@@ -83,7 +88,7 @@ Inputs most likely to hurt a real user that the spec does not spell out. Each ha
 - Create: `src/shell/layout.ts`, `tests/helpers/fake-terminal.ts`, `tests/shell-layout.test.ts`
 
 **Interfaces:**
-- Produces: `shellLayout(terminal: { columns: number; rows: number }, media: MediaInfo | null, backend: PreviewBackend): ShellLayout` where `ShellLayout = { bandRows; leftSidebarColumns; videoColumns; rightSidebarColumns }` (the band height never depends on what is typed).
+- Produces: `shellLayout(terminal: { columns: number; rows: number }, media: MediaInfo | null, backend: PreviewBackend): ShellLayout` where `ShellLayout = { bandRows; leftSidebarColumns; videoColumns; rightSidebarColumns; gap }` (the band height never depends on what is typed; the video never takes more than 60% of the screen, so the conversation keeps at least 7 rows on a normal terminal; sidebars are separated from the video by a 1 column gap).
 - Produces (tests): `FakeTerminal` (a pi-tui `Terminal` that draws into an emulator: `new FakeTerminal(columns = 120, rows = 40)`, `send(data)`, `resize(columns, rows)`, `settle(ms = 90)`, `screen(): string[]`, `mark()`, `since(mark)`, `writes`), `sixelPlacements(output)` and `STUB_SIXEL`.
 
 - [ ] **Step 1: Make sure the branch is clean and add the dependencies**
@@ -203,23 +208,28 @@ import type { MediaInfo } from "../src/types.js";
 
 const media = (width: number, height: number): MediaInfo => ({ path: "test.mp4", width, height, duration: 10, fps: 30, hasAudio: true, formatName: "mov,mp4" });
 
-test("sizes the video band from the picture's shape and keeps room for the chat", () => {
+test("sizes the video band from the picture's shape and keeps a good share of the screen for the chat", () => {
   assert.deepEqual(shellLayout({ columns: 120, rows: 40 }, media(1280, 720), "sixel"),
-    { bandRows: 29, leftSidebarColumns: 0, videoColumns: 120, rightSidebarColumns: 0 });
+    { bandRows: 24, leftSidebarColumns: 0, videoColumns: 120, rightSidebarColumns: 0, gap: 0 });
   assert.deepEqual(shellLayout({ columns: 80, rows: 24 }, media(1280, 720), "blocks"),
-    { bandRows: 13, leftSidebarColumns: 0, videoColumns: 80, rightSidebarColumns: 0 });
-  assert.equal(shellLayout({ columns: 120, rows: 40 }, media(1080, 1920), "sixel").bandRows, 29, "a tall video is capped by the room available");
+    { bandRows: 11, leftSidebarColumns: 0, videoColumns: 80, rightSidebarColumns: 0, gap: 0 });
+  assert.equal(shellLayout({ columns: 120, rows: 40 }, media(1080, 1920), "sixel").bandRows, 24, "a tall video is capped by the room available");
+  for (const rows of [32, 40, 50, 60]) {
+    const { bandRows } = shellLayout({ columns: 120, rows }, media(1280, 720), "sixel");
+    assert.ok(rows - 9 - bandRows >= 7, `${rows} rows leave ${rows - 9 - bandRows} for the chat`);
+    assert.ok(bandRows <= Math.floor(rows * 0.6), `${rows} rows: the video takes at most 60%`);
+  }
 });
 
-test("shows sidebars only on wide terminals and shares the rest with the video", () => {
+test("shows sidebars only on wide terminals, with a gap, and shares the rest with the video", () => {
   assert.deepEqual(shellLayout({ columns: 160, rows: 50 }, media(1280, 720), "sixel"),
-    { bandRows: 30, leftSidebarColumns: 26, videoColumns: 108, rightSidebarColumns: 26 });
+    { bandRows: 30, leftSidebarColumns: 26, videoColumns: 106, rightSidebarColumns: 26, gap: 1 });
   assert.equal(shellLayout({ columns: 129, rows: 50 }, media(1280, 720), "sixel").leftSidebarColumns, 0);
 });
 
 test("without a video the band takes all the room it may, and short terminals keep two chat rows", () => {
-  assert.equal(shellLayout({ columns: 100, rows: 20 }, null, "sixel").bandRows, 11);
-  assert.equal(shellLayout({ columns: 100, rows: 40 }, null, "sixel").bandRows, 29);
+  assert.equal(shellLayout({ columns: 100, rows: 20 }, null, "sixel").bandRows, 9);
+  assert.equal(shellLayout({ columns: 100, rows: 40 }, null, "sixel").bandRows, 24);
 });
 ```
 
@@ -261,10 +271,17 @@ export interface ShellLayout {
   leftSidebarColumns: number;
   videoColumns: number;
   rightSidebarColumns: number;
+  /** Columns of empty space between a sidebar and the video; 0 when there are no sidebars. */
+  gap: number;
 }
 
-/** Rows outside the band and the chat: header, timeline, controls hint, status line, and a one-row composer with its border. */
-const FIXED_ROWS = 7;
+/**
+ * Rows outside the band and the chat: header, a spacer under it, the play bar, the controls row, a spacer above the
+ * prompt box, the prompt box with one line of text (3 rows), and the status row.
+ */
+const FIXED_ROWS = 9;
+/** The video never takes more than this share of the screen, so the conversation keeps room. */
+const MAX_VIDEO_SHARE = 0.6;
 
 export function shellLayout(
   terminal: { columns: number; rows: number },
@@ -272,11 +289,12 @@ export function shellLayout(
   backend: PreviewBackend,
 ): ShellLayout {
   const available = Math.max(8, terminal.rows - FIXED_ROWS);
-  const minimumChat = terminal.rows < 24 ? 2 : 4;
-  const maximumBand = Math.max(6, available - minimumChat);
+  const minimumChat = terminal.rows < 24 ? 2 : terminal.rows < 32 ? 4 : 7;
+  const maximumBand = Math.max(6, Math.min(available - minimumChat, Math.floor(terminal.rows * MAX_VIDEO_SHARE)));
   const sidebarColumns = terminal.columns >= 130 ? clamp(Math.floor((terminal.columns - 82) / 2), 18, 26) : 0;
-  const videoColumns = Math.max(20, terminal.columns - sidebarColumns * 2);
-  const columns = { leftSidebarColumns: sidebarColumns, videoColumns, rightSidebarColumns: sidebarColumns };
+  const gap = sidebarColumns > 0 ? 1 : 0;
+  const videoColumns = Math.max(20, terminal.columns - sidebarColumns * 2 - gap * 2);
+  const columns = { leftSidebarColumns: sidebarColumns, videoColumns, rightSidebarColumns: sidebarColumns, gap };
   if (!media) return { bandRows: maximumBand, ...columns };
 
   const aspect = media.width / media.height;
@@ -558,6 +576,8 @@ export class ShellState {
   choice: ChoicePrompt | null = null;
   agentModel = "editor model";
   permissionMode: "ask" | "auto" = "ask";
+  /** Which frame of the busy spinner to show; advanced by a timer while something is working. */
+  spinner = 0;
 
   private readonly listeners = new Set<() => void>();
   private liveId: string | null = null;
@@ -584,6 +604,8 @@ export class ShellState {
   setAssets(assets: AgentAsset[]): void { this.assets = assets; this.emit(); }
   setStatus(status: string): void { this.status = status; this.emit(); }
   setLoader(loader: Loader | null): void { this.loader = loader; this.emit(); }
+  /** Move the busy spinner on one frame. Does nothing, and draws nothing, when nothing is working. */
+  tickSpinner(): void { if (this.loader) { this.spinner += 1; this.emit(); } }
   setAgentRunning(running: boolean): void { this.agentRunning = running; this.emit(); }
 
   // Playback and marks ---------------------------------------------------------------------------
@@ -729,7 +751,7 @@ function apply(state: ShellState, event: EngineEvent, options: BridgeOptions): v
       }
       if (event.reason === "aborted") state.addMessage("assistant", "Stopped.", "editor");
       if (event.reason === "budget") state.addMessage("assistant", "Stopped at the spend limit. Raise it with /budget.", "editor");
-      state.setStatus(event.reason === "done" ? `${label} · done` : event.reason === "error" ? `${label} request failed` : "Stopped");
+      state.setStatus(event.reason === "done" ? "Done" : event.reason === "error" ? "Request failed" : "Stopped");
       break;
     }
     default:
@@ -991,14 +1013,78 @@ git commit -m "feat: add the shell keymap"
 ## Task 4: The video layer: picture placement, playback, sound and the preview host
 
 **Files:**
-- Create: `src/shell/preview/video-layer.ts`, `layered-terminal.ts`, `playback.ts`, `audio.ts`, `preview-host.ts`, `tests/shell-preview.test.ts`
-- Modify: `package.json` (`test` script)
+- Create: `src/shell/preview/video-layer.ts`, `layered-terminal.ts`, `playback.ts`, `audio.ts`, `preview-host.ts`, `tests/shell-preview.test.ts`, `tests/stream-preview.test.ts`
+- Modify: `src/core/media.ts` (frames are paced by the app, and sound plays without video), `package.json` (`test` script)
 
 **Interfaces:**
 - Consumes: `previewRenderSize`, `extractRawFrame`, `streamRawPreview`, `encodePreviewFrame`, `playAudio` (`src/core/media.ts`), `terminateProcess`, `playbackStart` (Task 3), `FakeTerminal` (Task 1).
-- Produces: `buildVideoLayer(frame: EncodedFrame, rect: CellRect): string`; `CellRect = { x; y; w; h }` (0-based cells); `LayeredTerminal` (a pi-tui `Terminal` wrapper with `force()` and `paint()`; `VideoLayer = { rect; revision; output }`); `PlaybackController` (`update(input: PlaybackInput)`, `dispose()`; reports `PlaybackFrame = { encoded; size; backend; time }`); `AudioController` (`update(input: AudioInput)`, `dispose()`); `PreviewHost` (`terminal`, `setFrame(frame)`, `clear()`, `repaint()`).
+- Produces: `buildVideoLayer(frame: EncodedFrame, rect: CellRect): string`; `CellRect = { x; y; w; h }` (0-based cells); `LayeredTerminal` (a pi-tui `Terminal` wrapper with `force()` and `paint()`; `VideoLayer = { rect; revision; output }`); `PlaybackController` (`update(input: PlaybackInput)`, `dispose()`; reports `PlaybackFrame = { encoded; size; backend; time }`); `AudioController` (`update(input: AudioInput)`, `dispose()`); `PreviewHost` (`terminal`, `setFrame(frame)`, `clear()`, `repaint()`). In `src/core/media.ts`: `audioPlayerArguments(filePath, start, volume): string[]`, and a `streamRawPreview` that releases frames on the clock instead of using FFmpeg's `-re`.
 
 - [ ] **Step 1: Write the tests**
+
+`stream-preview` pins down a bug found in manual testing on 2026-10-03: after pausing and playing again, the sound started several seconds before the picture and the picture stood still until the sound caught up. Cause: in a video with long gaps between keyframes, seeking means decoding from the earlier keyframe; FFmpeg's `-re` paced that decoding in real time (the first picture arrived after about 3.7 s in the test and 5 s in the real clip), and `ffplay` with the video stream open landed on the same earlier keyframe, so the sound ran early.
+
+Create `tests/stream-preview.test.ts`:
+
+```typescript
+import assert from "node:assert/strict";
+import test from "node:test";
+import { audioPlayerArguments, streamRawPreview } from "../src/core/media.js";
+import { makeProject } from "./helpers/project.js";
+
+test("starts at the seek point right away, then delivers frames in real time", { timeout: 60_000 }, async () => {
+  // The test video has one keyframe at 0, so seeking to 3 s means decoding 3 s of video first. FFmpeg's -re
+  // paced that decoding in real time, so the first picture used to arrive about three seconds late.
+  const project = await makeProject();
+  try {
+    const frames: Array<{ time: number; at: number }> = [];
+    const began = Date.now();
+    let ended = false;
+    streamRawPreview({
+      filePath: project.store.current.filePath, start: 3, size: { width: 160, height: 90 }, fps: 12,
+      onFrame: (_frame, time) => frames.push({ time, at: Date.now() - began }),
+      onEnd: () => { ended = true; },
+    });
+    const deadline = Date.now() + 20_000;
+    while (!ended && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(ended, "the stream ends when the video does");
+    assert.ok(frames.length >= 6, `expected about a second of frames, got ${frames.length}`);
+    assert.equal(frames[0]?.time, 3);
+    assert.ok((frames[0]?.at ?? Infinity) < 1500, `the first picture arrived after ${frames[0]?.at} ms`);
+    const spanMs = (frames.at(-1)?.at ?? 0) - (frames[0]?.at ?? 0);
+    const videoMs = ((frames.at(-1)?.time ?? 0) - (frames[0]?.time ?? 0)) * 1000;
+    assert.ok(spanMs >= videoMs * 0.8, `frames must not run faster than the video: ${spanMs} ms for ${videoMs} ms of video`);
+    assert.ok(frames.every((frame, index) => index === 0 || frame.time > (frames[index - 1]?.time ?? 0)), "frame times only go forward");
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("stopping a stream stops its frames", { timeout: 60_000 }, async () => {
+  const project = await makeProject();
+  try {
+    let count = 0;
+    const stream = streamRawPreview({
+      filePath: project.store.current.filePath, start: 0, size: { width: 160, height: 90 }, fps: 12,
+      onFrame: () => { count += 1; }, onEnd: () => undefined,
+    });
+    const deadline = Date.now() + 10_000;
+    while (count < 2 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    stream.stop();
+    const seen = count;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.ok(count - seen <= 1, "no frames after stop");
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("plays only the sound, so seeking lands exactly where asked instead of on the previous video keyframe", () => {
+  const args = audioPlayerArguments("C:/videos/clip.mp4", 11.4, 70);
+  assert.deepEqual(args, ["-nodisp", "-vn", "-autoexit", "-loglevel", "error", "-ss", "11.400", "-volume", "70", "C:/videos/clip.mp4"]);
+  assert.equal(audioPlayerArguments("a.mp3", -2, 5).includes("0.000"), true, "a negative start is clamped to zero");
+});
+```
 
 Create `tests/shell-preview.test.ts`:
 
@@ -1206,7 +1292,7 @@ test("the preview host paints each new picture in the video rectangle, and hides
 });
 ```
 
-Add `shell-preview` to the `test` script:
+Add both to the `test` script:
 
 ```diff
 --- a/package.json
@@ -1216,7 +1302,7 @@ Add `shell-preview` to the `test` script:
      "check": "tsc --noEmit",
      "dev": "tsx src/cli.tsx",
 -    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/transcription.test.js",
-+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/transcription.test.js",
++    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/transcription.test.js",
      "quality": "npm run check && npm test && npm run build",
      "release:check": "npm run quality && npm pack --dry-run",
      "prepublishOnly": "npm run quality"
@@ -1228,7 +1314,7 @@ Add `shell-preview` to the `test` script:
 npx tsc -p tsconfig.test.json
 ```
 
-Expected: FAIL with `Cannot find module` for `video-layer`, `layered-terminal`, `playback`, `audio` and `preview-host` under `src/shell/preview/`.
+Expected: FAIL with `Cannot find module` for `video-layer`, `layered-terminal`, `playback`, `audio` and `preview-host` under `src/shell/preview/`, and `Module '../src/core/media.js' has no exported member 'audioPlayerArguments'`.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1653,14 +1739,738 @@ export class PreviewHost {
 }
 ```
 
+Then fix the two causes in `src/core/media.ts`: FFmpeg runs without `-re` and the new `streamRawPreview` releases each frame at its time (skipping to the newest due frame when late, and pausing FFmpeg while frames are waiting), and `ffplay` gets `-vn` through the new `audioPlayerArguments`:
+
+Apply this change to `src/core/media.ts`:
+
+```diff
+--- a/src/core/media.ts
++++ b/src/core/media.ts
+@@ -1,326 +1,388 @@
+-import { spawn, type ChildProcess } from "node:child_process";
+-import { access } from "node:fs/promises";
+-import type { MediaInfo } from "../types.js";
+-import { runProcess, terminateProcess, trackProcess } from "./process.js";
+-
+-interface ProbePayload {
+-  format?: { duration?: string; format_name?: string };
+-  streams?: Array<{
+-    codec_type?: string;
+-    width?: number;
+-    height?: number;
+-    duration?: string;
+-    avg_frame_rate?: string;
+-  }>;
+-}
+-
+-export async function assertFfmpeg(): Promise<void> {
+-  await Promise.all([
+-    runProcess("ffmpeg", ["-version"], { timeoutMs: 8_000, maxOutputBytes: 64_000 }),
+-    runProcess("ffprobe", ["-version"], { timeoutMs: 8_000, maxOutputBytes: 64_000 }),
+-  ]);
+-}
+-
+-export async function probeMedia(filePath: string): Promise<MediaInfo> {
+-  await access(filePath);
+-  const result = await runProcess(
+-    "ffprobe",
+-    ["-v", "error", "-show_entries", "format=duration,format_name:stream=codec_type,width,height,duration,avg_frame_rate", "-of", "json", filePath],
+-    { timeoutMs: 20_000, maxOutputBytes: 2_000_000 },
+-  );
+-  const payload = JSON.parse(result.stdout.toString("utf8")) as ProbePayload;
+-  const video = payload.streams?.find((stream) => stream.codec_type === "video");
+-  if (!video?.width || !video.height) throw new Error("The selected file has no readable video stream");
+-  const duration = Number(payload.format?.duration ?? video.duration);
+-  if (!Number.isFinite(duration) || duration <= 0) throw new Error("Could not determine the video duration");
+-  return {
+-    path: filePath,
+-    duration,
+-    width: video.width,
+-    height: video.height,
+-    fps: parseRate(video.avg_frame_rate),
+-    hasAudio: Boolean(payload.streams?.some((stream) => stream.codec_type === "audio")),
+-    formatName: payload.format?.format_name ?? "unknown",
+-  };
+-}
+-
+-export interface PreviewSize {
+-  width: number;
+-  height: number;
+-}
+-
+-export type PreviewBackend = "sixel" | "blocks";
+-
+-export function detectPreviewBackend(environment: NodeJS.ProcessEnv = process.env): PreviewBackend {
+-  const override = environment.DUMBEDITOR_PREVIEW?.trim().toLowerCase();
+-  if (override === "blocks" || override === "sixel") return override;
+-  if (environment.WT_SESSION) return "sixel";
+-  if (/sixel/i.test(environment.TERM ?? "")) return "sixel";
+-  return "blocks";
+-}
+-
+-export function previewRenderSize(
+-  info: MediaInfo,
+-  maxColumns: number,
+-  maxRows: number,
+-  backend: PreviewBackend,
+-): PreviewSize {
+-  if (backend === "blocks") return previewSize(info, maxColumns, maxRows);
+-  const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
+-  const cellHeight = positiveInteger(process.env.DUMBEDITOR_CELL_HEIGHT, 20);
+-  const widthLimit = even(Math.max(0, Math.floor(maxColumns - 2) * cellWidth));
+-  const heightLimit = even(Math.max(0, Math.floor(maxRows) * cellHeight));
+-  if (widthLimit < 2 || heightLimit < 2) return { width: 0, height: 0 };
+-  const scale = Math.min(widthLimit / info.width, heightLimit / info.height);
+-  return {
+-    width: even(Math.max(2, Math.floor(info.width * scale))),
+-    height: even(Math.max(2, Math.floor(info.height * scale))),
+-  };
+-}
+-
+-export function previewSize(info: MediaInfo, maxColumns: number, maxRows: number): PreviewSize {
+-  const columnLimit = even(Math.max(0, Math.floor(maxColumns)));
+-  const pixelHeightLimit = even(Math.max(0, Math.floor(maxRows) * 2));
+-  if (columnLimit < 2 || pixelHeightLimit < 2) return { width: 0, height: 0 };
+-  const scale = Math.min(1, columnLimit / info.width, pixelHeightLimit / info.height);
+-  const width = even(Math.max(2, Math.floor(info.width * scale)));
+-  const height = even(Math.max(2, Math.floor(info.height * scale)));
+-  return { width, height };
+-}
+-
+-export async function extractFrame(filePath: string, at: number, size: PreviewSize, signal?: AbortSignal): Promise<string> {
+-  const raw = await extractRawFrame(filePath, at, size, signal);
+-  return rgbToAnsi(raw, size.width, size.height);
+-}
+-
+-export async function extractRawFrame(filePath: string, at: number, size: PreviewSize, signal?: AbortSignal): Promise<Buffer> {
+-  const result = await runProcess(
+-    "ffmpeg",
+-    [
+-      "-v", "error", "-ss", Math.max(0, at).toFixed(3), "-i", filePath,
+-      "-frames:v", "1", "-vf", `scale=${size.width}:${size.height}:flags=lanczos`,
+-      "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
+-    ],
+-    {
+-      timeoutMs: 20_000,
+-      maxOutputBytes: size.width * size.height * 3 + 1024,
+-      ...(signal ? { signal } : {}),
+-    },
+-  );
+-  return result.stdout;
+-}
+-
+-export interface PreviewStream {
+-  process: ChildProcess;
+-  stop: () => void;
+-}
+-
+-export function streamPreview(options: {
+-  filePath: string;
+-  start: number;
+-  size: PreviewSize;
+-  fps?: number;
+-  onFrame: (frame: string, time: number) => void;
+-  onEnd: () => void;
+-  onError?: (error: Error) => void;
+-}): PreviewStream {
+-  return streamRawPreview({
+-    ...options,
+-    onFrame: (frame, time) => options.onFrame(rgbToAnsi(frame, options.size.width, options.size.height), time),
+-  });
+-}
+-
+-export function streamRawPreview(options: {
+-  filePath: string;
+-  start: number;
+-  size: PreviewSize;
+-  fps?: number;
+-  onFrame: (frame: Buffer, time: number) => void;
+-  onEnd: () => void;
+-  onError?: (error: Error) => void;
+-}): PreviewStream {
+-  const fps = options.fps ?? 8;
+-  const frameBytes = options.size.width * options.size.height * 3;
+-  const child = trackProcess(spawn(
+-    "ffmpeg",
+-    [
+-      "-v", "error", "-ss", Math.max(0, options.start).toFixed(3), "-re", "-i", options.filePath,
+-      "-an", "-vf", `fps=${fps},scale=${options.size.width}:${options.size.height}:flags=lanczos`,
+-      "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
+-    ],
+-    { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+-  ));
+-  let pending = Buffer.alloc(0);
+-  let stderr = "";
+-  let index = 0;
+-  let errorReported = false;
+-  child.stdout.on("data", (chunk: Buffer) => {
+-    pending = Buffer.concat([pending, chunk]);
+-    while (pending.length >= frameBytes) {
+-      const frame = pending.subarray(0, frameBytes);
+-      pending = pending.subarray(frameBytes);
+-      options.onFrame(frame, options.start + index / fps);
+-      index += 1;
+-    }
+-  });
+-  child.stderr?.on("data", (chunk: Buffer) => {
+-    stderr = (stderr + chunk.toString("utf8")).slice(-4000);
+-  });
+-  child.on("error", (error) => {
+-    errorReported = true;
+-    options.onError?.(error);
+-  });
+-  child.on("close", (code) => {
+-    if (code !== 0 && !child.killed && !errorReported) {
+-      options.onError?.(new Error(stderr.trim() || `FFmpeg preview exited with code ${code}`));
+-    }
+-    options.onEnd();
+-  });
+-  return { process: child, stop: () => terminateProcess(child) };
+-}
+-
+-export function encodePreviewFrame(
+-  buffer: Buffer,
+-  size: PreviewSize,
+-  backend: PreviewBackend,
+-): string {
+-  return backend === "sixel"
+-    ? rgbToSixel(buffer, size.width, size.height)
+-    : rgbToAnsi(buffer, size.width, size.height);
+-}
+-
+-export function playAudio(filePath: string, start: number, volume: number, onError?: (error: Error) => void): ChildProcess | null {
+-  try {
+-    let stderr = "";
+-    let errorReported = false;
+-    const child = trackProcess(spawn(
+-      "ffplay",
+-      ["-nodisp", "-autoexit", "-loglevel", "error", "-ss", Math.max(0, start).toFixed(3), "-volume", String(volume), filePath],
+-      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+-    ));
+-    child.stderr?.on("data", (chunk: Buffer) => {
+-      stderr = (stderr + chunk.toString("utf8")).slice(-4000);
+-    });
+-    child.on("error", (error) => {
+-      errorReported = true;
+-      onError?.(error);
+-    });
+-    child.on("close", (code) => {
+-      if (code !== 0 && !child.killed && !errorReported) onError?.(new Error(stderr.trim() || `ffplay exited with code ${code}`));
+-    });
+-    return child;
+-  } catch {
+-    return null;
+-  }
+-}
+-
+-export function rgbToAnsi(buffer: Buffer, width: number, height: number): string {
+-  const lines: string[] = [];
+-  for (let y = 0; y < height; y += 2) {
+-    let line = "";
+-    for (let x = 0; x < width; x += 1) {
+-      const top = (y * width + x) * 3;
+-      const bottom = ((Math.min(y + 1, height - 1) * width) + x) * 3;
+-      line += `\u001B[38;2;${buffer[top] ?? 0};${buffer[top + 1] ?? 0};${buffer[top + 2] ?? 0}m`;
+-      line += `\u001B[48;2;${buffer[bottom] ?? 0};${buffer[bottom + 1] ?? 0};${buffer[bottom + 2] ?? 0}m▀`;
+-    }
+-    lines.push(`${line}\u001B[0m`);
+-  }
+-  return lines.join("\n");
+-}
+-
+-/** Encode RGB24 as a 64-colour Sixel image with ordered dithering. */
+-export function rgbToSixel(buffer: Buffer, width: number, height: number): string {
+-  if (buffer.length < width * height * 3) throw new Error("Preview frame is incomplete");
+-  const palette: string[] = [];
+-  for (let red = 0; red < 4; red += 1) {
+-    for (let green = 0; green < 4; green += 1) {
+-      for (let blue = 0; blue < 4; blue += 1) {
+-        const index = red * 16 + green * 4 + blue;
+-        palette.push(`#${index};2;${Math.round(red * 100 / 3)};${Math.round(green * 100 / 3)};${Math.round(blue * 100 / 3)}`);
+-      }
+-    }
+-  }
+-
+-  const masks = new Uint8Array(64 * width);
+-  const used = new Uint8Array(64);
+-  const bands: string[] = [];
+-  for (let bandY = 0; bandY < height; bandY += 6) {
+-    masks.fill(0);
+-    used.fill(0);
+-    for (let offsetY = 0; offsetY < 6 && bandY + offsetY < height; offsetY += 1) {
+-      const y = bandY + offsetY;
+-      for (let x = 0; x < width; x += 1) {
+-        const pixel = (y * width + x) * 3;
+-        const threshold = (BAYER_4X4[(y & 3) * 4 + (x & 3)]! - 7.5) * 4;
+-        const red = quantizeChannel((buffer[pixel] ?? 0) + threshold);
+-        const green = quantizeChannel((buffer[pixel + 1] ?? 0) + threshold);
+-        const blue = quantizeChannel((buffer[pixel + 2] ?? 0) + threshold);
+-        const color = red * 16 + green * 4 + blue;
+-        const maskIndex = color * width + x;
+-        masks[maskIndex] = (masks[maskIndex] ?? 0) | (1 << offsetY);
+-        used[color] = 1;
+-      }
+-    }
+-
+-    const colors: number[] = [];
+-    for (let color = 0; color < 64; color += 1) if (used[color]) colors.push(color);
+-    const planes: string[] = [];
+-    for (const color of colors) {
+-      const base = color * width;
+-      let last = width - 1;
+-      while (last >= 0 && masks[base + last] === 0) last -= 1;
+-      if (last < 0) continue;
+-      let row = "";
+-      let runCharacter = "";
+-      let runLength = 0;
+-      for (let x = 0; x <= last; x += 1) {
+-        const character = String.fromCharCode(63 + (masks[base + x] ?? 0));
+-        if (character === runCharacter) runLength += 1;
+-        else {
+-          row += encodeSixelRun(runCharacter, runLength);
+-          runCharacter = character;
+-          runLength = 1;
+-        }
+-      }
+-      row += encodeSixelRun(runCharacter, runLength);
+-      planes.push(`#${color}${row}`);
+-    }
+-    bands.push(planes.join("$"));
+-  }
+-
+-  return `\u001BP0;1;0q"1;1;${width};${height}${palette.join("")}${bands.join("-")}\u001B\\`;
+-}
+-
+-function parseRate(rate?: string): number {
+-  if (!rate) return 0;
+-  const [numerator, denominator] = rate.split("/").map(Number);
+-  if (!numerator || !denominator) return Number(rate) || 0;
+-  return numerator / denominator;
+-}
+-
+-function even(value: number): number {
+-  const rounded = Math.floor(value);
+-  return rounded % 2 === 0 ? rounded : rounded - 1;
+-}
+-
+-function positiveInteger(value: string | undefined, fallback: number): number {
+-  const parsed = Number(value);
+-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+-}
+-
+-function quantizeChannel(value: number): number {
+-  return Math.max(0, Math.min(3, Math.round(value / 85)));
+-}
+-
+-function encodeSixelRun(character: string, length: number): string {
+-  if (!character || length <= 0) return "";
+-  return length >= 4 ? `!${length}${character}` : character.repeat(length);
+-}
+-
+-const BAYER_4X4 = [
+-  0, 8, 2, 10,
+-  12, 4, 14, 6,
+-  3, 11, 1, 9,
+-  15, 7, 13, 5,
+-] as const;
++import { spawn, type ChildProcess } from "node:child_process";
++import { access } from "node:fs/promises";
++import type { MediaInfo } from "../types.js";
++import { runProcess, terminateProcess, trackProcess } from "./process.js";
++
++interface ProbePayload {
++  format?: { duration?: string; format_name?: string };
++  streams?: Array<{
++    codec_type?: string;
++    width?: number;
++    height?: number;
++    duration?: string;
++    avg_frame_rate?: string;
++  }>;
++}
++
++export async function assertFfmpeg(): Promise<void> {
++  await Promise.all([
++    runProcess("ffmpeg", ["-version"], { timeoutMs: 8_000, maxOutputBytes: 64_000 }),
++    runProcess("ffprobe", ["-version"], { timeoutMs: 8_000, maxOutputBytes: 64_000 }),
++  ]);
++}
++
++export async function probeMedia(filePath: string): Promise<MediaInfo> {
++  await access(filePath);
++  const result = await runProcess(
++    "ffprobe",
++    ["-v", "error", "-show_entries", "format=duration,format_name:stream=codec_type,width,height,duration,avg_frame_rate", "-of", "json", filePath],
++    { timeoutMs: 20_000, maxOutputBytes: 2_000_000 },
++  );
++  const payload = JSON.parse(result.stdout.toString("utf8")) as ProbePayload;
++  const video = payload.streams?.find((stream) => stream.codec_type === "video");
++  if (!video?.width || !video.height) throw new Error("The selected file has no readable video stream");
++  const duration = Number(payload.format?.duration ?? video.duration);
++  if (!Number.isFinite(duration) || duration <= 0) throw new Error("Could not determine the video duration");
++  return {
++    path: filePath,
++    duration,
++    width: video.width,
++    height: video.height,
++    fps: parseRate(video.avg_frame_rate),
++    hasAudio: Boolean(payload.streams?.some((stream) => stream.codec_type === "audio")),
++    formatName: payload.format?.format_name ?? "unknown",
++  };
++}
++
++export interface PreviewSize {
++  width: number;
++  height: number;
++}
++
++export type PreviewBackend = "sixel" | "blocks";
++
++export function detectPreviewBackend(environment: NodeJS.ProcessEnv = process.env): PreviewBackend {
++  const override = environment.DUMBEDITOR_PREVIEW?.trim().toLowerCase();
++  if (override === "blocks" || override === "sixel") return override;
++  if (environment.WT_SESSION) return "sixel";
++  if (/sixel/i.test(environment.TERM ?? "")) return "sixel";
++  return "blocks";
++}
++
++export function previewRenderSize(
++  info: MediaInfo,
++  maxColumns: number,
++  maxRows: number,
++  backend: PreviewBackend,
++): PreviewSize {
++  if (backend === "blocks") return previewSize(info, maxColumns, maxRows);
++  const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
++  const cellHeight = positiveInteger(process.env.DUMBEDITOR_CELL_HEIGHT, 20);
++  const widthLimit = even(Math.max(0, Math.floor(maxColumns - 2) * cellWidth));
++  const heightLimit = even(Math.max(0, Math.floor(maxRows) * cellHeight));
++  if (widthLimit < 2 || heightLimit < 2) return { width: 0, height: 0 };
++  const scale = Math.min(widthLimit / info.width, heightLimit / info.height);
++  return {
++    width: even(Math.max(2, Math.floor(info.width * scale))),
++    height: even(Math.max(2, Math.floor(info.height * scale))),
++  };
++}
++
++export function previewSize(info: MediaInfo, maxColumns: number, maxRows: number): PreviewSize {
++  const columnLimit = even(Math.max(0, Math.floor(maxColumns)));
++  const pixelHeightLimit = even(Math.max(0, Math.floor(maxRows) * 2));
++  if (columnLimit < 2 || pixelHeightLimit < 2) return { width: 0, height: 0 };
++  const scale = Math.min(1, columnLimit / info.width, pixelHeightLimit / info.height);
++  const width = even(Math.max(2, Math.floor(info.width * scale)));
++  const height = even(Math.max(2, Math.floor(info.height * scale)));
++  return { width, height };
++}
++
++export async function extractFrame(filePath: string, at: number, size: PreviewSize, signal?: AbortSignal): Promise<string> {
++  const raw = await extractRawFrame(filePath, at, size, signal);
++  return rgbToAnsi(raw, size.width, size.height);
++}
++
++export async function extractRawFrame(filePath: string, at: number, size: PreviewSize, signal?: AbortSignal): Promise<Buffer> {
++  const result = await runProcess(
++    "ffmpeg",
++    [
++      "-v", "error", "-ss", Math.max(0, at).toFixed(3), "-i", filePath,
++      "-frames:v", "1", "-vf", `scale=${size.width}:${size.height}:flags=lanczos`,
++      "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
++    ],
++    {
++      timeoutMs: 20_000,
++      maxOutputBytes: size.width * size.height * 3 + 1024,
++      ...(signal ? { signal } : {}),
++    },
++  );
++  return result.stdout;
++}
++
++export interface PreviewStream {
++  process: ChildProcess;
++  stop: () => void;
++}
++
++export function streamPreview(options: {
++  filePath: string;
++  start: number;
++  size: PreviewSize;
++  fps?: number;
++  onFrame: (frame: string, time: number) => void;
++  onEnd: () => void;
++  onError?: (error: Error) => void;
++}): PreviewStream {
++  return streamRawPreview({
++    ...options,
++    onFrame: (frame, time) => options.onFrame(rgbToAnsi(frame, options.size.width, options.size.height), time),
++  });
++}
++
++/**
++ * Decode a video from `start` and hand over RGB frames in real time. FFmpeg runs without -re: with -re it paces its
++ * reading in real time from the keyframe before `start`, so seeking into a long GOP made the first picture arrive
++ * seconds late. Frames are released on the clock here instead, and FFmpeg is paused while enough are waiting.
++ */
++export function streamRawPreview(options: {
++  filePath: string;
++  start: number;
++  size: PreviewSize;
++  fps?: number;
++  onFrame: (frame: Buffer, time: number) => void;
++  onEnd: () => void;
++  onError?: (error: Error) => void;
++}): PreviewStream {
++  const fps = options.fps ?? 8;
++  const frameBytes = options.size.width * options.size.height * 3;
++  const child = trackProcess(spawn(
++    "ffmpeg",
++    [
++      "-v", "error", "-ss", Math.max(0, options.start).toFixed(3), "-i", options.filePath,
++      "-an", "-vf", `fps=${fps},scale=${options.size.width}:${options.size.height}:flags=lanczos`,
++      "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
++    ],
++    { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
++  ));
++  const waiting: Buffer[] = [];
++  let pending = Buffer.alloc(0);
++  let stderr = "";
++  let released = 0;
++  let startedAt = 0;
++  let timer: NodeJS.Timeout | null = null;
++  let exited = false;
++  let finished = false;
++  let stopped = false;
++  let errorReported = false;
++
++  const finishIfDone = () => {
++    if (!exited || waiting.length > 0 || timer || finished) return;
++    finished = true;
++    options.onEnd();
++  };
++  const release = () => {
++    timer = null;
++    let frame = waiting.shift();
++    if (!frame) { finishIfDone(); return; }
++    let index = released;
++    released += 1;
++    // When we are running late, skip to the newest frame that is already due instead of falling further behind.
++    while (waiting.length > 0 && startedAt + (released * 1000) / fps <= Date.now()) {
++      frame = waiting.shift() as Buffer;
++      index = released;
++      released += 1;
++    }
++    options.onFrame(frame, options.start + index / fps);
++    if (waiting.length <= 2) child.stdout.resume();
++    schedule();
++  };
++  const schedule = () => {
++    if (timer) return;
++    if (waiting.length === 0) { finishIfDone(); return; }
++    if (startedAt === 0) startedAt = Date.now();
++    timer = setTimeout(release, Math.max(0, startedAt + (released * 1000) / fps - Date.now()));
++  };
++
++  child.stdout.on("data", (chunk: Buffer) => {
++    if (stopped) return;
++    pending = Buffer.concat([pending, chunk]);
++    while (pending.length >= frameBytes) {
++      waiting.push(pending.subarray(0, frameBytes));
++      pending = pending.subarray(frameBytes);
++    }
++    if (waiting.length > 4) child.stdout.pause();
++    schedule();
++  });
++  child.stderr?.on("data", (data: Buffer) => {
++    stderr = (stderr + data.toString("utf8")).slice(-4000);
++  });
++  child.on("error", (error) => {
++    errorReported = true;
++    options.onError?.(error);
++  });
++  child.on("close", (code) => {
++    if (code !== 0 && !child.killed && !errorReported) {
++      options.onError?.(new Error(stderr.trim() || `FFmpeg preview exited with code ${code}`));
++    }
++    exited = true;
++    child.stdout.resume();
++    schedule();
++    finishIfDone();
++  });
++  return {
++    process: child,
++    stop: () => {
++      stopped = true;
++      if (timer) clearTimeout(timer);
++      timer = null;
++      waiting.length = 0;
++      terminateProcess(child);
++      finishIfDone();
++    },
++  };
++}
++
++export function encodePreviewFrame(
++  buffer: Buffer,
++  size: PreviewSize,
++  backend: PreviewBackend,
++): string {
++  return backend === "sixel"
++    ? rgbToSixel(buffer, size.width, size.height)
++    : rgbToAnsi(buffer, size.width, size.height);
++}
++
++/**
++ * ffplay arguments for playing only the sound. Without -vn ffplay also opens the video and seeks to the keyframe
++ * before the requested time, which can be several seconds early, so the sound would start ahead of the picture.
++ */
++export function audioPlayerArguments(filePath: string, start: number, volume: number): string[] {
++  return ["-nodisp", "-vn", "-autoexit", "-loglevel", "error", "-ss", Math.max(0, start).toFixed(3), "-volume", String(volume), filePath];
++}
++
++export function playAudio(filePath: string, start: number, volume: number, onError?: (error: Error) => void): ChildProcess | null {
++  try {
++    let stderr = "";
++    let errorReported = false;
++    const child = trackProcess(spawn(
++      "ffplay",
++      audioPlayerArguments(filePath, start, volume),
++      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
++    ));
++    child.stderr?.on("data", (chunk: Buffer) => {
++      stderr = (stderr + chunk.toString("utf8")).slice(-4000);
++    });
++    child.on("error", (error) => {
++      errorReported = true;
++      onError?.(error);
++    });
++    child.on("close", (code) => {
++      if (code !== 0 && !child.killed && !errorReported) onError?.(new Error(stderr.trim() || `ffplay exited with code ${code}`));
++    });
++    return child;
++  } catch {
++    return null;
++  }
++}
++
++export function rgbToAnsi(buffer: Buffer, width: number, height: number): string {
++  const lines: string[] = [];
++  for (let y = 0; y < height; y += 2) {
++    let line = "";
++    for (let x = 0; x < width; x += 1) {
++      const top = (y * width + x) * 3;
++      const bottom = ((Math.min(y + 1, height - 1) * width) + x) * 3;
++      line += `\u001B[38;2;${buffer[top] ?? 0};${buffer[top + 1] ?? 0};${buffer[top + 2] ?? 0}m`;
++      line += `\u001B[48;2;${buffer[bottom] ?? 0};${buffer[bottom + 1] ?? 0};${buffer[bottom + 2] ?? 0}m▀`;
++    }
++    lines.push(`${line}\u001B[0m`);
++  }
++  return lines.join("\n");
++}
++
++/** Encode RGB24 as a 64-colour Sixel image with ordered dithering. */
++export function rgbToSixel(buffer: Buffer, width: number, height: number): string {
++  if (buffer.length < width * height * 3) throw new Error("Preview frame is incomplete");
++  const palette: string[] = [];
++  for (let red = 0; red < 4; red += 1) {
++    for (let green = 0; green < 4; green += 1) {
++      for (let blue = 0; blue < 4; blue += 1) {
++        const index = red * 16 + green * 4 + blue;
++        palette.push(`#${index};2;${Math.round(red * 100 / 3)};${Math.round(green * 100 / 3)};${Math.round(blue * 100 / 3)}`);
++      }
++    }
++  }
++
++  const masks = new Uint8Array(64 * width);
++  const used = new Uint8Array(64);
++  const bands: string[] = [];
++  for (let bandY = 0; bandY < height; bandY += 6) {
++    masks.fill(0);
++    used.fill(0);
++    for (let offsetY = 0; offsetY < 6 && bandY + offsetY < height; offsetY += 1) {
++      const y = bandY + offsetY;
++      for (let x = 0; x < width; x += 1) {
++        const pixel = (y * width + x) * 3;
++        const threshold = (BAYER_4X4[(y & 3) * 4 + (x & 3)]! - 7.5) * 4;
++        const red = quantizeChannel((buffer[pixel] ?? 0) + threshold);
++        const green = quantizeChannel((buffer[pixel + 1] ?? 0) + threshold);
++        const blue = quantizeChannel((buffer[pixel + 2] ?? 0) + threshold);
++        const color = red * 16 + green * 4 + blue;
++        const maskIndex = color * width + x;
++        masks[maskIndex] = (masks[maskIndex] ?? 0) | (1 << offsetY);
++        used[color] = 1;
++      }
++    }
++
++    const colors: number[] = [];
++    for (let color = 0; color < 64; color += 1) if (used[color]) colors.push(color);
++    const planes: string[] = [];
++    for (const color of colors) {
++      const base = color * width;
++      let last = width - 1;
++      while (last >= 0 && masks[base + last] === 0) last -= 1;
++      if (last < 0) continue;
++      let row = "";
++      let runCharacter = "";
++      let runLength = 0;
++      for (let x = 0; x <= last; x += 1) {
++        const character = String.fromCharCode(63 + (masks[base + x] ?? 0));
++        if (character === runCharacter) runLength += 1;
++        else {
++          row += encodeSixelRun(runCharacter, runLength);
++          runCharacter = character;
++          runLength = 1;
++        }
++      }
++      row += encodeSixelRun(runCharacter, runLength);
++      planes.push(`#${color}${row}`);
++    }
++    bands.push(planes.join("$"));
++  }
++
++  return `\u001BP0;1;0q"1;1;${width};${height}${palette.join("")}${bands.join("-")}\u001B\\`;
++}
++
++function parseRate(rate?: string): number {
++  if (!rate) return 0;
++  const [numerator, denominator] = rate.split("/").map(Number);
++  if (!numerator || !denominator) return Number(rate) || 0;
++  return numerator / denominator;
++}
++
++function even(value: number): number {
++  const rounded = Math.floor(value);
++  return rounded % 2 === 0 ? rounded : rounded - 1;
++}
++
++function positiveInteger(value: string | undefined, fallback: number): number {
++  const parsed = Number(value);
++  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
++}
++
++function quantizeChannel(value: number): number {
++  return Math.max(0, Math.min(3, Math.round(value / 85)));
++}
++
++function encodeSixelRun(character: string, length: number): string {
++  if (!character || length <= 0) return "";
++  return length >= 4 ? `!${length}${character}` : character.repeat(length);
++}
++
++const BAYER_4X4 = [
++  0, 8, 2, 10,
++  12, 4, 14, 6,
++  3, 11, 1, 9,
++  15, 7, 13, 5,
++] as const;
+```
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-npx tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/shell-preview.test.js
+npx tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js
 npm test
 ```
 
-Expected: 8 passed in `shell-preview` (one renders real video with FFmpeg and takes about ten seconds), then the whole suite: 135 tests, 134 passed, 1 skipped (the live OpenRouter test), 0 failed.
+Expected: 8 passed in `shell-preview` and 3 in `stream-preview` (both render real video with FFmpeg and take a few seconds), then the whole suite: 138 tests, 137 passed, 1 skipped (the live OpenRouter test), 0 failed.
 
 - [ ] **Step 5: Commit**
 
@@ -1672,13 +2482,13 @@ git commit -m "feat: add the video layer, playback, sound and the preview host"
 ## Task 5: The screen: views, layout root and keys, proven with an emulated terminal
 
 **Files:**
-- Create: `src/shell/views/{style,header,timeline,controls,sidebars,transcript,composer,video-view}.ts`, `src/shell/screen.ts`, `tests/shell-views.test.ts`, `tests/shell-screen.test.ts`
+- Create: `src/shell/views/{style,header,timeline,controls,sidebars,transcript,composer,video-view}.ts`, `src/shell/input/editing-keys.ts`, `src/shell/screen.ts`, `tests/shell-views.test.ts`, `tests/shell-screen.test.ts`
 - Modify: `package.json` (`test` script)
 
 **Interfaces:**
 - Consumes: everything from Tasks 1 to 4 (`ShellState`, `resolveKey`, `shellLayout`, `PreviewHost`), pi-tui's `TuiAltScreen`, `VStack`, `HStack`, `ScrollView`, `Editor`, `CombinedAutocompleteProvider`, `wrapTextWithAnsi`, `COMMANDS` (`src/core/commands.ts`).
 - Produces: `createShellScreen(options: ScreenOptions): ShellScreen` with `ScreenOptions = { terminal; state; backend; commands; cwd; hooks: ScreenHooks; overlays?: (kind, context: OverlayContext) => Component | null; onLayout?: () => void }`, `ScreenHooks = { onSubmit; onInterrupt; onAbortAgent; onOpenAssets }`, `OverlayContext = { bandRows: () => number; close(): void }`; the screen exposes `tui`, `preview`, `composer`, `transcript`, `layout()`, `videoRect()`, `refresh()`, `start()`, `stop()`.
-- Produces: `HeaderView`, `TimelineView`, `ControlsView`, `StatusView`, `ProjectSidebarView`, `AssetsSidebarView`, `boxed(lines, width, height)`, `assetIcon(kind)`, `MessageView`, `TranscriptView`, `Composer`, `VideoView`, and the text helpers in `style.ts` (`fitLine`, `spaceBetween`, `shorten`, `plain`, colours).
+- Produces: `HeaderView`, `TimelineView`, `ControlsView`, `StatusView`, `ProjectSidebarView`, `AssetsSidebarView`, `boxed(lines, width, height)`, `assetIcon(kind)`, `MessageView`, `TranscriptView`, `Composer`, `VideoView`, the text and colour helpers in `style.ts` (`fitLine`, `spaceBetween`, `shorten`, `shortProjectName`, `plain`, `styleMarkdown`, the theme colours, `chip`, `onBar`, `onPanel`), and `applyEditingKeys()` (Ctrl+Backspace and Ctrl+Delete delete a word, Ctrl+Shift+Backspace and Ctrl+Shift+Delete the row; pi-tui's own Ctrl+W, Alt+Backspace, Ctrl+U and Ctrl+K stay).
 
 - [ ] **Step 1: Write the tests**
 
@@ -1694,8 +2504,8 @@ import { ShellState } from "../src/shell/state/shell-state.js";
 import { ControlsView, StatusView } from "../src/shell/views/controls.js";
 import { HeaderView } from "../src/shell/views/header.js";
 import { AssetsSidebarView, ProjectSidebarView } from "../src/shell/views/sidebars.js";
-import { plain, shorten, spaceBetween } from "../src/shell/views/style.js";
-import { timelineBar } from "../src/shell/views/timeline.js";
+import { plain, shorten, spaceBetween, styleMarkdown } from "../src/shell/views/style.js";
+import { timelineBar, TimelineView, volumeBar } from "../src/shell/views/timeline.js";
 import { MessageView } from "../src/shell/views/transcript.js";
 
 const media = { path: "a.mp4", width: 1280, height: 720, duration: 20, fps: 30, hasAudio: true, formatName: "mp4" };
@@ -1708,73 +2518,106 @@ function stateWithProject(): ShellState {
   return state;
 }
 
-test("header: product name and project on the right, or what the editor is doing", () => {
+test("header: the name on the left; project, version and model on the right, or what is going on", () => {
   const state = stateWithProject();
   const header = new HeaderView(state);
-  const idle = plain(header.render(60)[0] ?? "");
-  assert.equal(idle.length, 60);
-  assert.match(idle, /^DumbEditor +Demo cut · v0002$/);
+  const idle = plain(header.render(70)[0] ?? "");
+  assert.equal(idle.length, 70);
+  assert.match(idle, /^ {2}◆ DumbEditor {2}› {2}Demo cut {2}v0002 +● ready {2}$/);
+  state.setProject("Demo cut · 2026-10-03 00:46", "v0002", 5);
+  assert.ok(!plain(header.render(70)[0] ?? "").includes("2026"), "the date added to a project name is left out");
+  state.setProject("Demo cut", "v0002", 5);
   state.setLoader({ source: "glm", stage: "Rendering with FFmpeg" });
-  assert.match(plain(header.render(80)[0] ?? ""), /^DumbEditor +◐ glm · Rendering with FFmpeg · video updating$/);
+  assert.match(plain(header.render(100)[0] ?? ""), /^ {2}◆ DumbEditor {2}› {2}Demo cut {2}v0002 +⠋ glm · Rendering with FFmpeg · video updating {2}$/);
+  state.tickSpinner();
+  assert.match(plain(header.render(100)[0] ?? ""), /⠙ glm/, "the spinner moves on");
   state.setLoader({ source: "Sandbox", stage: "Running script" });
-  assert.match(plain(header.render(80)[0] ?? ""), /◐ ⬡ SANDBOX · Running script/);
+  assert.match(plain(header.render(100)[0] ?? ""), /SANDBOX · Running script/);
+  state.setLoader(null);
+  const before = state.spinner;
+  state.tickSpinner();
+  assert.equal(state.spinner, before, "nothing animates while nothing is working");
   assert.equal(visibleWidth(header.render(12)[0] ?? ""), 12, "a narrow header is cut, never wider than the screen");
+  assert.match(plain(new HeaderView(new ShellState()).render(40)[0] ?? ""), /No video/);
 });
 
-test("play bar marks the playhead and the in and out points", () => {
-  const bar = timelineBar(10, 20, { in: 5, out: 15 }, 80);
+test("play bar marks the playhead, the played part and the in and out points", () => {
+  const bar = plain(timelineBar(10, 20, { in: 5, out: 15 }, 56));
   assert.equal(bar.length, 56);
   assert.equal([...bar].filter((character) => character === "◆").length, 1);
-  assert.ok(bar.includes("╞") && bar.includes("╡"));
+  assert.ok(bar.includes("▌") && bar.includes("▐"));
   assert.equal(bar.indexOf("◆"), Math.round(0.5 * 55));
-  assert.equal(timelineBar(0, 0, { in: null, out: null }, 80).indexOf("◆"), 0, "an empty video does not divide by zero");
+  assert.ok(bar.startsWith("━") && bar.endsWith("─"), "played part, then what is left");
+  assert.equal(plain(timelineBar(0, 0, { in: null, out: null }, 30)).indexOf("◆"), 0, "an empty video does not divide by zero");
+  assert.equal(plain(volumeBar(70)), "♪ ▮▮▮▮▮▮▮▯▯▯ 70%");
 });
 
-test("controls row: play state, volume, marks and the hints that fit", () => {
+test("transport row: play state, time, bar, length and volume, in the video's columns", () => {
   const state = stateWithProject();
-  state.adjustVolume(-20);
-  state.setPlayhead(8); state.setIn();
-  const controls = new ControlsView(state, () => "sixel");
-  const wide = plain(controls.render(130)[0] ?? "");
-  assert.match(wide, /^Ⅱ paused · volume 50% · in 00:08\.0 +SIXEL · Ctrl\+P play/);
-  assert.equal(wide.length, 130);
-  assert.match(plain(controls.render(100)[0] ?? ""), /Ctrl\+P play · \+\/- volume/);
+  const row = new TimelineView(state, () => ({ leftPad: 0, videoColumns: 100 }));
+  const paused = plain(row.render(100)[0] ?? "");
+  assert.equal(paused.length, 100);
+  assert.match(paused, /^ ‖ 00:00\.0 [━─◆▌▐]+ 00:20\.0 {2}♪ ▮▮▮▮▮▮▮▯▯▯ 70%/);
   state.setPlaying(true);
-  assert.match(plain(controls.render(100)[0] ?? ""), /^▶ playing/);
+  assert.match(plain(row.render(100)[0] ?? ""), /^ ▶ /);
+  assert.ok(!plain(new TimelineView(state, () => ({ leftPad: 0, videoColumns: 50 })).render(50)[0] ?? "").includes("♪"), "no volume on a narrow video");
+  assert.equal(plain(new TimelineView(new ShellState(), () => ({ leftPad: 0, videoColumns: 50 })).render(50)[0] ?? "").trim(), "");
 });
 
-test("status row: what is happening, what it costs, and which keys matter", () => {
+test("controls row: the marked range on the left, the keys that matter on the right", () => {
+  const state = stateWithProject();
+  const controls = new ControlsView(state, () => "sixel");
+  assert.match(plain(controls.render(130)[0] ?? ""), /^ +SIXEL · Ctrl\+P play · ←\/→ seek 5s · \+\/- volume · \[ \] marks · Ctrl\+G chat {2}$/);
+  state.setPlayhead(8); state.setIn();
+  assert.match(plain(controls.render(130)[0] ?? ""), /^ {2}in 00:08\.0 +SIXEL/);
+  state.setPlayhead(15); state.setOut();
+  assert.match(plain(controls.render(130)[0] ?? ""), /^ {2}in 00:08\.0 · out 00:15\.0 · 7\.0s selected/);
+  const narrow = plain(controls.render(100)[0] ?? "");
+  assert.equal(narrow.length, 100);
+  assert.ok(!narrow.includes("SIXEL"));
+});
+
+test("status row: model, spend and permission mode, the latest note, and the keys that matter now", () => {
   const state = stateWithProject();
   const status = new StatusView(state);
-  assert.match(plain(status.render(160)[0] ?? ""), /^Ready · glm \$0\.0000 · Assets \$0\.0000 · Total \$0\.0000 · Enter to send · Ctrl\+C to quit/);
+  assert.match(plain(status.render(160)[0] ?? ""), /^ {2}● glm +\$0\.0000 +ask +Ready +Enter send · Ctrl\+C quit {2}$/);
   state.setAgentRunning(true);
   state.setLoader({ source: "glm", stage: "Thinking" });
-  assert.match(plain(status.render(160)[0] ?? ""), /glm is working .* Enter steers · Esc stops/);
+  assert.match(plain(status.render(160)[0] ?? ""), /⠋ glm is working .* ask +Enter steers · Esc stops/);
   state.setAgentRunning(false);
   state.setLoader({ source: "Editor", stage: "Saving new version" });
   assert.match(plain(status.render(160)[0] ?? ""), /video updating · ↑\/↓ chat/);
+  state.setLoader(null);
+  state.setPermissionMode("auto");
+  assert.match(plain(status.render(160)[0] ?? ""), / auto /);
 });
 
-test("project sidebar: boxed to its size, current version marked, extra versions counted", () => {
+test("project sidebar: a soft panel with padding, current version marked, extra versions counted", () => {
   const state = stateWithProject();
   state.setVersions(Array.from({ length: 12 }, (_, index) => ({ id: `v${String(11 - index).padStart(4, "0")}`, parentId: null, filePath: "x", action: `edit number ${index}`, request: "", createdAt: "", duration: 10 })) as never, "v0009");
   const sidebar = new ProjectSidebarView(state, () => 20);
-  const lines = sidebar.render(24).map(plain);
+  const raw = sidebar.render(26);
+  const lines = raw.map(plain);
   assert.equal(lines.length, 20);
-  assert.ok(lines.every((line) => visibleWidth(line) === 24), "every row is exactly the sidebar width");
-  assert.match(lines[0] ?? "", /^┌─+┐$/);
-  assert.match(lines[19] ?? "", /^└─+┘$/);
+  assert.ok(lines.every((line) => visibleWidth(line) === 26), "every row is exactly the sidebar width");
+  assert.equal(lines[0]?.trim(), "", "a blank row of padding above");
+  assert.match(lines[1] ?? "", /^ {2}PROJECT {2}/, "two columns of padding on the left");
+  assert.ok(raw.every((line) => /\x1b\[48;/.test(line)), "every row sits on the panel's background");
+  assert.ok(raw.some((line) => /\x1b\[49m\x1b\[48;/.test(line)), "the background comes back after the permission chip's own");
   const text = lines.join("\n");
+  assert.match(text, /PROJECT[\s\S]*Demo cut[\s\S]*glm[\s\S]*ask +\$0\.0000[\s\S]*VERSIONS/);
   assert.match(text, /● v0009/);
   assert.match(text, /○ v0011/);
   assert.match(text, /\+\d+ more/);
-  assert.match(text, /Permissions: ask/);
+  assert.match(text, /limit 5 · \/version/);
 });
 
 test("assets sidebar: newest first with costs, or a hint when empty", () => {
   const state = stateWithProject();
   const sidebar = new AssetsSidebarView(state, () => 12);
-  assert.match(sidebar.render(26).map(plain).join("\n"), /No assets yet/);
+  const empty = sidebar.render(30).map(plain);
+  assert.ok(empty.every((line) => visibleWidth(line) === 30), "every row is exactly the sidebar width");
+  assert.match(empty.join("\n"), /ASSETS[\s\S]*None yet/);
   state.setAssets([
     { id: "a1", kind: "image", description: "A blue title card", path: "p", source: "generated", costUsd: 0.04 },
     { id: "a2", kind: "music", description: "Calm piano", path: "q", source: "catalog" },
@@ -1783,16 +2626,31 @@ test("assets sidebar: newest first with costs, or a hint when empty", () => {
   assert.ok(text.indexOf("Calm piano") < text.indexOf("A blue title card"), "newest first");
   assert.match(text, /♪ Calm piano +—/);
   assert.match(text, /▧ A blue title card +\$0\.04/);
+  assert.match(text, /Ctrl\+O browse/);
 });
 
-test("a message shows who said it and wraps under its label with the markdown tidied", () => {
-  const user = new MessageView({ id: "1", role: "user", text: "remove the first two seconds", live: false }, () => "glm");
-  assert.equal(plain(user.render(80)[0] ?? ""), "you › remove the first two seconds");
-  const agent = new MessageView({ id: "2", role: "assistant", text: "**Done.** I removed `0-2s`.\n- first item\n- second item", live: false }, () => "glm");
-  assert.deepEqual(agent.render(80).map(plain), ["glm › Done. I removed 0-2s.", "    │ • first item", "    │ • second item"]);
-  const long = new MessageView({ id: "3", role: "assistant", text: "word ".repeat(30).trim(), label: "tool", live: false }, () => "glm").render(30).map(plain);
-  assert.ok(long.length > 2 && long.every((line) => visibleWidth(line) <= 30));
-  assert.ok(long[0]?.startsWith("tool › ") && long[1]?.startsWith("     │ "));
+test("messages: a symbol in the gutter instead of a name, wrapped lines under the text, markdown styled", () => {
+  const user = new MessageView({ id: "1", role: "user", text: "remove the first two seconds", live: false });
+  assert.deepEqual(user.render(80).map(plain), ["  ❯ remove the first two seconds"], "two columns of margin");
+  assert.deepEqual(new MessageView({ id: "1", role: "user", text: "next", live: false }, true).render(80).map(plain), ["", "  ❯ next"], "a blank row before your message");
+  const agent = new MessageView({ id: "2", role: "assistant", text: "**Done.** I removed `0-2s`.\n- first item\n- second item", label: "glm", live: false });
+  assert.deepEqual(agent.render(80).map(plain), ["  ◆ Done. I removed 0-2s.", "    • first item", "    • second item"]);
+  const tool = (text: string) => new MessageView({ id: "3", role: "assistant", text, label: "tool", live: false }).render(80).map(plain);
+  assert.deepEqual(tool("▸ Inspect 3 frame(s)"), ["    ▸ Inspect 3 frame(s)"]);
+  assert.deepEqual(tool("✓ Looked at 3 frames"), ["    ✓ Looked at 3 frames"]);
+  assert.deepEqual(tool("✗ Range is outside the video"), ["    ✗ Range is outside the video"]);
+  assert.deepEqual(new MessageView({ id: "4", role: "assistant", text: "Opened demo", label: "editor", live: false }).render(80).map(plain), ["  · Opened demo"]);
+  assert.deepEqual(new MessageView({ id: "5", role: "assistant", text: "boom", label: "error", live: false }).render(80).map(plain), ["  ✗ boom"]);
+  const long = new MessageView({ id: "6", role: "assistant", text: "word ".repeat(30).trim(), label: "glm", live: false }).render(30).map(plain);
+  assert.ok(long.length > 2 && long.every((line) => visibleWidth(line) <= 30 - 2), "the right margin is kept too");
+  assert.ok(long[0]?.startsWith("  ◆ ") && long.slice(1).every((line) => line.startsWith("    ")));
+});
+
+test("markdown: bold, code, headings and bullets keep their text", () => {
+  assert.equal(plain(styleMarkdown("**bold** and `code`")), "bold and code");
+  assert.equal(plain(styleMarkdown("## A heading")), "A heading");
+  assert.equal(plain(styleMarkdown("- item")), "• item");
+  assert.equal(plain(styleMarkdown("2 * 3 * 4")), "2 * 3 * 4", "stray asterisks are left alone");
 });
 
 test("text helpers cut and join without exceeding the width", () => {
@@ -1846,7 +2704,7 @@ async function boot(columns = 120, rows = 40) {
   screen.start();
   screen.preview.setFrame({ encoded: STUB_SIXEL, size: { width: 400, height: 200 }, backend: "sixel" });
   await fake.settle();
-  const band = () => fake.screen().slice(0, screen.layout().bandRows + 1);
+  const band = () => fake.screen().slice(0, screen.layout().bandRows + 2);
   return { fake, state, screen, calls, panels, band };
 }
 const typeText = async (fake: FakeTerminal, text: string) => { for (const character of text) { fake.send(character); await new Promise((resolve) => setTimeout(resolve, 6)); } await fake.settle(); };
@@ -1854,12 +2712,14 @@ const typeText = async (fake: FakeTerminal, text: string) => { for (const charac
 test("draws the header, the video band, the play bar, the hints, the chat area and the status row", async () => {
   const { fake, screen } = await boot();
   const rows = fake.screen();
-  assert.match(rows[0] ?? "", /^DumbEditor\s+demo · v0000$/);
+  assert.match(rows[0] ?? "", /^ {2}◆ DumbEditor {2}› {2}demo {2}v0000 +● ready *$/);
+  assert.equal((rows[1] ?? "").trim(), "", "a blank row under the header");
   const { bandRows } = screen.layout();
-  assert.match(rows[bandRows + 1] ?? "", /00:00.0 .*00:20.0/, "play bar under the video");
-  assert.match(rows[bandRows + 2] ?? "", /Ⅱ paused · volume 70%/);
-  assert.match(rows[39] ?? "", /^Ready · glm \$0\.0000/);
-  assert.deepEqual(sixelPlacements(fake.writes.join("")).at(-1), [2, 41], "the picture is centred in the band, under the header");
+  assert.match(rows[bandRows + 2] ?? "", /‖ 00:00\.0 .*00:20\.0 {2}♪ ▮▮▮▮▮▮▮▯▯▯ 70%/, "transport row under the video");
+  assert.match(rows[bandRows + 3] ?? "", /SIXEL · Ctrl\+P play/);
+  assert.match(rows[39] ?? "", /^ {2}● glm +\$0\.0000 +ask +Ready/);
+  assert.ok(rows.some((line) => line.includes("╭─ ask · glm")) && rows.some((line) => /│ ❯ +Describe an edit, or type \/ for commands/.test(line)), "the prompt box shows its title and a hint");
+  assert.deepEqual(sixelPlacements(fake.writes.join("")).at(-1), [3, 41], "the picture is centred in the band, under the header");
   screen.stop();
 });
 
@@ -1870,7 +2730,7 @@ test("a long pasted input grows the composer without moving the band or repainti
   fake.send(paste("describe the video cd C:\\Users\\SHREYASH KUMAR SINGH\\Desktop ".repeat(12)));
   await fake.settle();
   assert.deepEqual(band(), before, "header, panels and video rows stay exactly where they were");
-  assert.match(fake.screen()[39] ?? "", /^Ready/, "the status row stays last");
+  assert.match(fake.screen()[39] ?? "", /● glm.*Ready/, "the status row stays last");
   const composerRows = fake.screen().filter((line) => /describe the video|C:\\Users|SINGH/.test(line)).length;
   assert.ok(composerRows >= 4, `composer grew to ${composerRows} rows`);
   const out = fake.since(mark);
@@ -1895,15 +2755,15 @@ test("resizing keeps the layout consistent and puts the video at the new rectang
     fake.resize(columns, rows);
     await fake.settle();
     const screenRows = fake.screen();
-    assert.match(screenRows[rows - 1] ?? "", /^Ready/, `${columns}x${rows}: status row`);
-    assert.match(screenRows[0] ?? "", /^DumbEditor/, `${columns}x${rows}: header row`);
+    assert.match(screenRows[rows - 1] ?? "", /● glm.*Ready/, `${columns}x${rows}: status row`);
+    assert.match(screenRows[0] ?? "", /^ {2}◆ DumbEditor/, `${columns}x${rows}: header row`);
     const rect = screen.videoRect();
     const image = Math.ceil(400 / 10);
     assert.deepEqual(sixelPlacements(fake.since(mark)).at(-1), [rect.y + 1, rect.x + Math.floor((rect.w - image) / 2) + 1], `${columns}x${rows}: video placement`);
     assert.ok(screenRows.every((line) => line.length <= columns), `${columns}x${rows}: no row wider than the screen`);
     if (columns >= 130) {
-      assert.match(screenRows[1] ?? "", /^┌─+┐/, "left sidebar");
-      assert.match(screenRows[1] ?? "", /┌─+┐\s*$/, "right sidebar");
+      assert.match(screenRows[3] ?? "", /^ {2}PROJECT/, "left sidebar");
+      assert.match(screenRows[3] ?? "", /ASSETS *$/, "right sidebar");
     }
   }
   screen.stop();
@@ -1953,12 +2813,12 @@ test("Ctrl+G gives the whole body to the chat and Escape brings the band back", 
   fake.send(KEY.ctrlG);
   await fake.settle();
   assert.equal(state.chatExpanded, true);
-  assert.match(fake.screen()[1] ?? "", /you › hello/, "the chat starts right under the header");
+  assert.match(fake.screen()[2] ?? "", /❯ hello/, "the chat starts right under the header");
   const mark = fake.mark();
   fake.send(KEY.esc);
   await fake.settle();
   assert.equal(state.chatExpanded, false);
-  assert.match(fake.screen()[screen.layout().bandRows + 1] ?? "", /00:00/, "the play bar is back");
+  assert.match(fake.screen()[screen.layout().bandRows + 2] ?? "", /00:00/, "the play bar is back");
   assert.equal(sixelPlacements(fake.since(mark)).length, 1, "and so is the video");
   screen.stop();
 });
@@ -2027,7 +2887,7 @@ test("a very small terminal still draws every row within its width, and a regain
     await fake.settle();
     const screenRows = fake.screen();
     assert.equal(screenRows.length, rows);
-    assert.match(screenRows[0] ?? "", /^DumbEditor/, `${columns}x${rows}: header`);
+    assert.match(screenRows[0] ?? "", /^ {2}◆ DumbEditor/, `${columns}x${rows}: header`);
     assert.ok(screenRows.every((line) => line.length <= columns), `${columns}x${rows}: no row wider than the screen`);
   }
   const mark = fake.mark();
@@ -2036,6 +2896,38 @@ test("a very small terminal still draws every row within its width, and a regain
   assert.equal(sixelPlacements(fake.since(mark)).length, 1, "the picture is drawn again when the window regains focus");
   assert.equal(screen.composer.text, "", "and the focus report is not typed");
   screen.stop();
+});
+
+test("Ctrl+Backspace and Ctrl+Delete delete a word at a time, and Ctrl+U and Ctrl+K delete the rest of the row", async () => {
+  const { fake, screen } = await boot();
+  const previous = process.env.WT_SESSION;
+  process.env.WT_SESSION = "test-session";
+  try {
+    await typeText(fake, "remove the quiet middle part");
+    fake.send("\x08"); // Windows Terminal sends a backspace byte for Ctrl+Backspace
+    await fake.settle();
+    assert.equal(screen.composer.text, "remove the quiet middle ");
+    fake.send("\x1b[127;5u"); // the same key, from terminals that report modifiers
+    await fake.settle();
+    assert.equal(screen.composer.text, "remove the quiet ");
+    fake.send("\x01"); // Ctrl+A: start of the row
+    fake.send("\x1b[3;5~"); // Ctrl+Delete
+    await fake.settle();
+    assert.equal(screen.composer.text, " the quiet ", "the word goes, its trailing space stays");
+    fake.send("\x05"); // Ctrl+E: end of the row
+    fake.send("\x15"); // Ctrl+U: everything before the cursor
+    await fake.settle();
+    assert.equal(screen.composer.text, "");
+    await typeText(fake, "one two");
+    fake.send("\x01");
+    fake.send("\x0b"); // Ctrl+K: everything after the cursor
+    await fake.settle();
+    assert.equal(screen.composer.text, "");
+  } finally {
+    if (previous === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previous;
+    screen.stop();
+  }
 });
 ```
 
@@ -2048,8 +2940,8 @@ Add both to the `test` script:
      "build": "tsup",
      "check": "tsc --noEmit",
      "dev": "tsx src/cli.tsx",
--    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/transcription.test.js",
-+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/transcription.test.js",
+-    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/transcription.test.js",
++    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/transcription.test.js",
      "quality": "npm run check && npm test && npm run build",
      "release:check": "npm run quality && npm pack --dry-run",
      "prepublishOnly": "npm run quality"
@@ -2070,19 +2962,73 @@ Notes: the band (sidebars and video, or an open panel) has a fixed height from `
 Create `src/shell/views/style.ts`:
 
 ```typescript
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { backgroundAnsi, foregroundAnsi, getTerminalColorMode, parseColor, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-const wrap = (open: number, close: number) => (text: string): string => `\u001B[${open}m${text}\u001B[${close}m`;
+// The look: one calm violet accent on a dark ground, with sky blue for "you" and the play position. Colours are
+// written as hex and converted to what the terminal can show (true colour, or the nearest of 256).
+const PALETTE = {
+  accent: "#a78bfa",
+  info: "#7dd3fc",
+  good: "#4ade80",
+  warn: "#fbbf24",
+  bad: "#f87171",
+  muted: "#9aa3b2",
+  faint: "#566070",
+} as const;
 
-export const bold = wrap(1, 22);
-export const dim = wrap(2, 22);
-export const inverse = wrap(7, 27);
-export const red = wrap(31, 39);
-export const green = wrap(32, 39);
-export const yellow = wrap(33, 39);
-export const magenta = wrap(35, 39);
-export const cyan = wrap(36, 39);
-export const gray = wrap(90, 39);
+const SURFACE = {
+  bar: "#181826",
+  chip: "#262638",
+  panel: "#13131b",
+  selected: "#34285a",
+} as const;
+
+const colourCache = new Map<string, ReturnType<typeof parseColor>>();
+const colourOf = (hex: string) => {
+  let colour = colourCache.get(hex);
+  if (!colour) { colour = parseColor(hex); colourCache.set(hex, colour); }
+  return colour;
+};
+const foreground = (hex: string) => (text: string): string => `${foregroundAnsi(colourOf(hex), getTerminalColorMode())}${text}\u001B[39m`;
+// A background that survives a nested one ending: text inside (a chip, say) turns the background off when it ends,
+// so the outer background is switched back on right after.
+const background = (hex: string) => (text: string): string => {
+  const open = backgroundAnsi(colourOf(hex), getTerminalColorMode());
+  return `${open}${text.replaceAll("\u001B[49m", `\u001B[49m${open}`).replaceAll("\u001B[0m", `\u001B[0m${open}`)}\u001B[49m`;
+};
+const attribute = (open: number, close: number) => (text: string): string => `\u001B[${open}m${text}\u001B[${close}m`;
+
+export const bold = attribute(1, 22);
+export const dim = attribute(2, 22);
+export const italic = attribute(3, 23);
+
+export const accent = foreground(PALETTE.accent);
+export const info = foreground(PALETTE.info);
+export const good = foreground(PALETTE.good);
+export const warn = foreground(PALETTE.warn);
+export const bad = foreground(PALETTE.bad);
+export const muted = foreground(PALETTE.muted);
+export const faint = foreground(PALETTE.faint);
+
+/** A soft highlight for the selected row of a list. */
+export const selected = background(SURFACE.selected);
+/** The tinted ground of the header bar and of small chips. */
+export const onBar = background(SURFACE.bar);
+export const onChip = background(SURFACE.chip);
+/** The soft ground of the sidebars. */
+export const onPanel = background(SURFACE.panel);
+
+/** A small label with its own ground, for things like the permission mode. */
+export const chip = (text: string, colour: (text: string) => string = muted): string => onChip(colour(` ${text} `));
+
+// Older names, now mapped to the theme so every panel shares the same colours.
+export const inverse = selected;
+export const red = bad;
+export const green = good;
+export const yellow = warn;
+export const magenta = accent;
+export const cyan = info;
+export const gray = faint;
 
 /** Cut to the width (without an ellipsis marker when it already fits) and pad with spaces to exactly that width. */
 export function fitLine(text: string, width: number): string {
@@ -2097,6 +3043,12 @@ export function spaceBetween(left: string, right: string, width: number): string
   return fitLine(left, width);
 }
 
+/** A project's name without the date and time added when it was created: "clip · 2026-10-03 00:46" is "clip". */
+export function shortProjectName(name: string): string {
+  const cut = name.split(" · ")[0]?.trim();
+  return cut ? cut : name;
+}
+
 /** Collapse whitespace and cut a value to a number of characters, ending in an ellipsis when cut. */
 export function shorten(value: string, limit: number): string {
   const clean = value.replace(/\s+/g, " ").trim();
@@ -2108,6 +3060,17 @@ export function plain(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/\u001B\[[0-9;?]*[A-Za-z]|\u001B\][^\u0007]*\u0007|\u001B_[^\u001B]*\u001B\\/g, "");
 }
+
+/** Light markdown for the chat: bold, inline code, headings and bullets. */
+export function styleMarkdown(line: string): string {
+  const heading = /^\s*#{1,6}\s+(.*)$/.exec(line);
+  if (heading) return bold(accent(heading[1] ?? ""));
+  return line
+    .replace(/^(\s*)[-*]\s+/, (_all, indent: string) => `${indent}${faint("•")} `)
+    .replace(/\*\*(.+?)\*\*/g, (_all, text: string) => bold(text))
+    .replace(/__(.+?)__/g, (_all, text: string) => bold(text))
+    .replace(/`([^`]+)`/g, (_all, text: string) => accent(text));
+}
 ```
 
 Create `src/shell/views/header.ts`:
@@ -2115,20 +3078,29 @@ Create `src/shell/views/header.ts`:
 ```typescript
 import type { Component } from "@earendil-works/pi-tui";
 import type { ShellState } from "../state/shell-state.js";
-import { bold, cyan, dim, fitLine, magenta, spaceBetween, yellow } from "./style.js";
+import { accent, bold, faint, fitLine, good, muted, onBar, shortProjectName, shorten, spaceBetween, warn } from "./style.js";
 
-const LOADER_MARK = "◐";
+export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/** One row: the product name on the left, what the editor is doing (or the project and version) on the right. */
+/** The top bar, like a breadcrumb: the name, the project and its version; and on the right what is going on. */
 export class HeaderView implements Component {
   constructor(private readonly state: ShellState) {}
 
   render(width: number): string[] {
-    const { loader } = this.state;
-    const right = loader
-      ? (loader.source === "Sandbox" ? cyan : yellow)(`${LOADER_MARK} ${loader.source === "Sandbox" ? "⬡ SANDBOX" : loader.source} · ${loader.stage}${this.state.videoMutationActive ? " · video updating" : ""}`)
-      : dim(this.state.projectName ? `${this.state.projectName} · ${this.state.versionId}` : "No video");
-    return [fitLine(spaceBetween(bold(magenta("DumbEditor")), right, width), width)];
+    const { loader, projectName, versionId } = this.state;
+    const crumbs = projectName
+      ? `  ${faint("›")}  ${bold(shorten(shortProjectName(projectName), Math.max(8, width - 60)))}  ${accent(versionId)}`
+      : "";
+    const left = `  ${accent("◆")} ${bold("DumbEditor")}${crumbs}`;
+    let right: string;
+    if (loader) {
+      const frame = SPINNER_FRAMES[this.state.spinner % SPINNER_FRAMES.length] ?? "⠋";
+      const source = loader.source === "Sandbox" ? "SANDBOX" : loader.source;
+      right = warn(`${frame} ${source} · ${loader.stage}${this.state.videoMutationActive ? " · video updating" : ""}`);
+    } else {
+      right = projectName ? `${good("●")} ${muted("ready")}` : faint("No video");
+    }
+    return [onBar(fitLine(spaceBetween(left, `${right}  `, width), width))];
   }
 
   invalidate(): void { /* stateless */ }
@@ -2138,42 +3110,49 @@ export class HeaderView implements Component {
 Create `src/shell/views/timeline.ts`:
 
 ```typescript
-import type { Component } from "@earendil-works/pi-tui";
+import { visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { formatTime } from "../../core/time.js";
 import type { Selection } from "../../types.js";
 import type { ShellState } from "../state/shell-state.js";
-import { cyan, fitLine, gray } from "./style.js";
+import { accent, bad, faint, fitLine, good, info, muted } from "./style.js";
 
-/** The play bar: time, a line with the playhead and the in/out marks, and the length. Centred under the video. */
+/** The transport row under the video: play state, time, the bar with the playhead and marks, length and volume. */
 export class TimelineView implements Component {
   constructor(private readonly state: ShellState, private readonly geometry: () => { leftPad: number; videoColumns: number }) {}
 
   render(width: number): string[] {
-    const { media, playhead, selection } = this.state;
+    const { media, playhead, selection, playing, volume } = this.state;
     if (!media) return [fitLine("", width)];
     const { leftPad, videoColumns } = this.geometry();
-    const bar = timelineBar(playhead, media.duration, selection, videoColumns);
-    const text = `${cyan(formatTime(playhead))} ${gray(bar)} ${gray(formatTime(media.duration))}`;
-    const plainWidth = formatTime(playhead).length + bar.length + formatTime(media.duration).length + 2;
-    const indent = leftPad + Math.max(0, Math.floor((videoColumns - plainWidth) / 2));
-    return [fitLine(`${" ".repeat(indent)}${text}`, width)];
+    const time = formatTime(playhead);
+    const total = formatTime(media.duration);
+    const level = videoColumns >= 64 ? volumeBar(volume) : "";
+    const fixed = 1 + 2 + time.length + 1 + 1 + total.length + (level ? 2 + visibleWidth(level) : 0) + 1;
+    const length = Math.max(10, Math.min(120, videoColumns - fixed));
+    const line = `${playing ? accent("▶") : muted("‖")} ${info(time)} ${timelineBar(playhead, media.duration, selection, length)} ${muted(total)}${level ? `  ${level}` : ""}`;
+    return [fitLine(`${" ".repeat(leftPad + 1)}${line}`, width)];
   }
 
   invalidate(): void { /* stateless */ }
 }
 
-export function timelineBar(current: number, duration: number, selection: Selection, columns: number): string {
-  const length = Math.max(18, Math.min(90, columns - 24));
+export function volumeBar(volume: number): string {
+  const filled = Math.round(Math.max(0, Math.min(100, volume)) / 10);
+  return `${faint("♪")} ${muted("▮".repeat(filled))}${faint("▯".repeat(10 - filled))} ${muted(`${volume}%`)}`;
+}
+
+/** The line itself: played part bright, the rest faint, the playhead as a diamond, in and out marks as bars. */
+export function timelineBar(current: number, duration: number, selection: Selection, length: number): string {
   const cursor = position(current, duration, length);
   const inPoint = selection.in === null ? -1 : position(selection.in, duration, length);
   const outPoint = selection.out === null ? -1 : position(selection.out, duration, length);
   let bar = "";
   for (let index = 0; index < length; index += 1) {
-    if (index === cursor) bar += "◆";
-    else if (index === inPoint) bar += "╞";
-    else if (index === outPoint) bar += "╡";
-    else if (index < cursor) bar += "━";
-    else bar += "─";
+    if (index === cursor) bar += info("◆");
+    else if (index === inPoint) bar += good("▌");
+    else if (index === outPoint) bar += bad("▐");
+    else if (index < cursor) bar += accent("━");
+    else bar += faint("─");
   }
   return bar;
 }
@@ -2191,35 +3170,48 @@ import type { Component } from "@earendil-works/pi-tui";
 import { formatTime } from "../../core/time.js";
 import { formatUsd } from "../../core/usage.js";
 import type { ShellState } from "../state/shell-state.js";
-import { dim, fitLine, spaceBetween } from "./style.js";
+import { SPINNER_FRAMES } from "./header.js";
+import { chip, faint, fitLine, good, muted, shorten, spaceBetween, warn } from "./style.js";
 
-/** The row under the timeline: play state, volume and marks on the left, key hints on the right. */
+/** The row under the play bar: the marked range on the left, the keys that matter on the right. */
 export class ControlsView implements Component {
   constructor(private readonly state: ShellState, private readonly backend: () => string) {}
 
   render(width: number): string[] {
-    const { playing, volume, selection } = this.state;
-    const left = `${playing ? "▶ playing" : "Ⅱ paused"} · volume ${volume}%${selection.in !== null ? ` · in ${formatTime(selection.in)}` : ""}${selection.out !== null ? ` · out ${formatTime(selection.out)}` : ""}`;
+    const { selection } = this.state;
+    const marks: string[] = [];
+    if (selection.in !== null) marks.push(`in ${formatTime(selection.in)}`);
+    if (selection.out !== null) marks.push(`out ${formatTime(selection.out)}`);
+    if (selection.in !== null && selection.out !== null && selection.out > selection.in) marks.push(`${(selection.out - selection.in).toFixed(1)}s selected`);
+    const left = marks.length > 0 ? `  ${muted(marks.join(" · "))}` : "";
     const hint = width >= 120
-      ? `${this.backend().toUpperCase()} · Ctrl+P play · ←/→ 5s · +/- volume · ↑/↓ chat · Ctrl+G focus`
-      : "Ctrl+P play · +/- volume · ↑/↓ chat · Ctrl+G focus";
-    return [fitLine(dim(spaceBetween(left, hint, width)), width)];
+      ? `${this.backend().toUpperCase()} · Ctrl+P play · ←/→ seek 5s · +/- volume · [ ] marks · Ctrl+G chat  `
+      : "Ctrl+P play · ←/→ seek · +/- volume · [ ] marks · Ctrl+G chat  ";
+    return [fitLine(spaceBetween(left, faint(hint), width), width)];
   }
 
   invalidate(): void { /* stateless */ }
 }
 
-/** The bottom row: status, what has been spent, and the keys that matter right now. */
+/** The bottom row: model, what has been spent, permission mode and the latest note, with the keys that matter now. */
 export class StatusView implements Component {
   constructor(private readonly state: ShellState) {}
 
   render(width: number): string[] {
-    const { loader, usage, agentModel, agentRunning, videoMutationActive, status } = this.state;
-    const costs = `${agentModel} ${formatUsd(usage.lunaUsd)} · Assets ${formatUsd(usage.assetUsd)} · Total ${formatUsd(usage.totalUsd)}`;
-    const text = loader
-      ? `${loader.source} is working · ${costs} · ${agentRunning ? "Enter steers · Esc stops" : videoMutationActive ? "video updating · ↑/↓ chat" : "↑/↓ chat · ←/→ seek · Ctrl+P play"}`
-      : `${status} · ${costs} · Enter to send · Ctrl+C to quit`;
-    return [fitLine(dim(text), width)];
+    const { loader, usage, agentModel, agentRunning, videoMutationActive, status, permissionMode } = this.state;
+    const money = muted(`${formatUsd(usage.totalUsd)}`);
+    const mode = chip(permissionMode, permissionMode === "auto" ? warn : muted);
+    let left: string;
+    let right: string;
+    if (loader) {
+      const frame = SPINNER_FRAMES[this.state.spinner % SPINNER_FRAMES.length] ?? "⠋";
+      left = `  ${warn(frame)} ${muted(`${loader.source} is working`)}  ${money}  ${mode}`;
+      right = agentRunning ? "Enter steers · Esc stops  " : videoMutationActive ? "video updating · ↑/↓ chat  " : "↑/↓ chat · ←/→ seek · Ctrl+P play  ";
+    } else {
+      left = `  ${good("●")} ${muted(shorten(agentModel, 26))}  ${money}  ${mode}  ${faint(shorten(status, Math.max(10, width - 90)))}`;
+      right = "Enter send · Ctrl+C quit  ";
+    }
+    return [fitLine(spaceBetween(left, faint(right), width), width)];
   }
 
   invalidate(): void { /* stateless */ }
@@ -2233,7 +3225,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import type { AgentAsset } from "../../core/agent-workspace.js";
 import { formatUsd } from "../../core/usage.js";
 import type { ShellState } from "../state/shell-state.js";
-import { bold, cyan, dim, fitLine, gray, green, magenta, shorten, yellow } from "./style.js";
+import { accent, bold, chip, dim, faint, fitLine, gray, muted, onPanel, shortProjectName, shorten, warn } from "./style.js";
 
 export function assetIcon(kind: AgentAsset["kind"]): string {
   if (kind === "image") return "▧";
@@ -2255,35 +3247,44 @@ export function boxed(lines: string[], width: number, height: number): string[] 
   return [top, ...rows, bottom].slice(0, Math.max(2, height));
 }
 
-/** Left of the video: project name, model, spend, and the version list. */
+const PADDING = 2;
+
+/** A side column on a soft background: a blank row above, two columns of space on each side, a blank row below. */
+function panel(lines: string[], width: number, height: number): string[] {
+  const content = Math.max(1, width - PADDING * 2);
+  const pad = " ".repeat(PADDING);
+  return Array.from({ length: height }, (_, index) => onPanel(`${pad}${fitLine(lines[index - 1] ?? "", content)}${pad}`));
+}
+
+const heading = (text: string): string => bold(muted(text));
+
+/** Left of the video: the project, the model and the spend, then the version list. */
 export class ProjectSidebarView implements Component {
   constructor(private readonly state: ShellState, private readonly bandRows: () => number) {}
 
   render(width: number): string[] {
     const { state } = this;
     const height = this.bandRows();
-    const room = Math.max(1, height - 13);
-    const inner = Math.max(1, width - 4);
+    const room = Math.max(1, height - 11);
+    const inner = Math.max(1, width - PADDING * 2);
     const visible = state.versions.slice(0, room);
     const lines = [
-      bold(cyan("Project")),
-      shorten(state.projectName ?? "No project", inner),
-      shorten(state.agentModel, inner),
-      dim(`Permissions: ${state.permissionMode}`),
-      yellow(shorten(`${state.agentModel} ${formatUsd(state.usage.lunaUsd)}`, inner)),
-      ...(state.usage.harnessUsd > 0 ? [yellow(`Harness ${formatUsd(state.usage.harnessUsd)}`)] : []),
-      dim(`Total ${formatUsd(state.usage.totalUsd)}`),
+      heading("PROJECT"),
+      bold(shorten(shortProjectName(state.projectName ?? "No project"), inner)),
+      muted(shorten(state.agentModel, inner)),
+      `${chip(state.permissionMode, state.permissionMode === "auto" ? warn : muted)} ${muted(formatUsd(state.usage.totalUsd))}`,
       "",
-      bold(magenta("Versions")),
+      heading("VERSIONS"),
       ...visible.map((version) => {
         const current = version.id === state.versionId;
-        const line = `${current ? "●" : "○"} ${version.id} ${shorten(version.action, Math.max(4, width - 10))}`;
-        return current ? green(line) : line;
+        const text = `${current ? "●" : "○"} ${version.id} ${shorten(version.action, Math.max(4, inner - 9))}`;
+        return current ? accent(text) : muted(text);
       }),
-      ...(state.versions.length > visible.length ? [dim(`+${state.versions.length - visible.length} more`)] : []),
-      dim(`limit ${state.versionLimit} · /version`),
+      ...(state.versions.length > visible.length ? [faint(`+${state.versions.length - visible.length} more`)] : []),
+      "",
+      faint(`limit ${state.versionLimit} · /version`),
     ];
-    return boxed(lines, width, height);
+    return panel(lines, width, height);
   }
 
   invalidate(): void { /* stateless */ }
@@ -2296,17 +3297,20 @@ export class AssetsSidebarView implements Component {
   render(width: number): string[] {
     const { state } = this;
     const height = this.bandRows();
-    const room = Math.max(1, height - 7);
+    const room = Math.max(1, height - 8);
+    const inner = Math.max(1, width - PADDING * 2);
     const visible = [...state.assets].reverse().slice(0, room);
     const lines = [
-      bold(cyan("Assets")),
-      yellow(`Cost ${formatUsd(state.usage.assetUsd)}`),
-      ...(visible.length === 0 ? [dim("No assets yet")] : visible.map((asset) =>
-        `${assetIcon(asset.kind)} ${shorten(asset.description, Math.max(4, width - 14))} ${dim(asset.costUsd === undefined ? "—" : formatUsd(asset.costUsd, asset.costEstimated))}`)),
-      ...(state.assets.length > visible.length ? [dim(`+${state.assets.length - visible.length} more`)] : []),
-      dim("Ctrl+O to browse"),
+      heading("ASSETS"),
+      muted(`${formatUsd(state.usage.assetUsd)} spent`),
+      "",
+      ...(visible.length === 0 ? [dim(faint("None yet"))] : visible.map((asset) =>
+        `${accent(assetIcon(asset.kind))} ${shorten(asset.description, Math.max(4, inner - 10))} ${faint(asset.costUsd === undefined ? "—" : formatUsd(asset.costUsd, asset.costEstimated))}`)),
+      ...(state.assets.length > visible.length ? [faint(`+${state.assets.length - visible.length} more`)] : []),
+      "",
+      faint("Ctrl+O browse"),
     ];
-    return boxed(lines, width, height);
+    return panel(lines, width, height);
   }
 
   invalidate(): void { /* stateless */ }
@@ -2316,28 +3320,46 @@ export class AssetsSidebarView implements Component {
 Create `src/shell/views/transcript.ts`:
 
 ```typescript
-import { Container, ScrollView, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import { Container, ScrollView, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import type { TranscriptMessage } from "../state/shell-state.js";
-import { cyan, dim, magenta, red } from "./style.js";
+import { accent, bad, bold, faint, good, info, muted, styleMarkdown, warn } from "./style.js";
 
-/** One message: `you › text`, or `model › text`, with wrapped lines indented under the label. */
+/** Space kept free at the left and right of the conversation, in line with the header and the prompt box. */
+const MARGIN = "  ";
+
+/**
+ * One message with a gutter symbol instead of a name: `❯` for you, `◆` for the agent, `▸ ✓ ✗` for tool steps,
+ * `·` for notes from the editor. Wrapped lines line up under the text. A blank row separates your messages.
+ */
 export class MessageView implements Component {
-  constructor(private readonly message: TranscriptMessage, private readonly agentModel: () => string) {}
+  constructor(private readonly message: TranscriptMessage, private readonly spaceBefore = false) {}
 
   render(width: number): string[] {
     const { message } = this;
-    const label = message.role === "user" ? "you" : (message.label ?? this.agentModel());
-    const color = message.role === "user" ? cyan : label === "error" ? red : label === "tool" ? dim : magenta;
-    const first = `${color(label)} › `;
-    const indent = `${" ".repeat(label.length)} │ `;
-    const prefixWidth = label.length + 3;
-    const room = Math.max(4, width - prefixWidth);
+    const { gutter, style } = this.look();
+    const indent = " ".repeat(visibleWidth(gutter));
+    const room = Math.max(4, width - indent.length - MARGIN.length * 2);
+    // Tool steps start with their own symbol (▸ ✓ ✗); the gutter shows it, so the text is shown without it.
+    const text = message.label === "tool" ? message.text.replace(/^[▸✓✗]\s*/, "") : message.text;
     const output: string[] = [];
-    for (const logical of cleanTerminalMarkdown(message.text).split(/\r?\n/)) {
-      const pieces = logical.trim() === "" ? [""] : wrapTextWithAnsi(logical, room);
-      for (const piece of pieces) output.push(`${output.length === 0 ? first : dim(indent)}${piece}`);
+    for (const logical of text.split(/\r?\n/)) {
+      const pieces = logical.trim() === "" ? [""] : wrapTextWithAnsi(style(styleMarkdown(logical)), room);
+      for (const piece of pieces) output.push(`${MARGIN}${output.length === 0 ? gutter : indent}${piece}`);
     }
-    return output.length > 0 ? output : [first];
+    if (output.length === 0) output.push(`${MARGIN}${gutter}`);
+    return this.spaceBefore ? ["", ...output] : output;
+  }
+
+  private look(): { gutter: string; style: (text: string) => string } {
+    const { message } = this;
+    if (message.role === "user") return { gutter: `${bold(info("❯"))} `, style: (text) => text };
+    if (message.label === "error") return { gutter: `${bad("✗")} `, style: bad };
+    if (message.label === "editor") return { gutter: `${faint("·")} `, style: muted };
+    if (message.label === "tool") {
+      const glyph = message.text.startsWith("✓") ? good("✓") : message.text.startsWith("✗") ? bad("✗") : warn("▸");
+      return { gutter: `  ${glyph} `, style: muted };
+    }
+    return { gutter: `${accent("◆")} `, style: (text) => text };
   }
 
   invalidate(): void { /* rendered fresh every frame */ }
@@ -2349,7 +3371,7 @@ export class TranscriptView {
   private readonly container = new Container();
   private ids: string[] = [];
 
-  constructor(private readonly agentModel: () => string) {
+  constructor() {
     this.view = new ScrollView(this.container, { follow: "end", primary: true });
   }
 
@@ -2358,7 +3380,7 @@ export class TranscriptView {
     const ids = messages.map((message) => message.id);
     if (ids.length === this.ids.length && ids.every((id, index) => id === this.ids[index])) return;
     this.container.clear();
-    for (const message of messages) this.container.addChild(new MessageView(message, this.agentModel));
+    messages.forEach((message, index) => this.container.addChild(new MessageView(message, index > 0 && message.role === "user")));
     this.ids = ids;
   }
 
@@ -2368,22 +3390,74 @@ export class TranscriptView {
   /** A page: the visible height minus one row of overlap. */
   pageRows(): number { return Math.max(1, this.view.viewportHeight - 1); }
 }
-
-function cleanTerminalMarkdown(value: string): string {
-  return value
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^\s*[-*]\s+/gm, "• ");
-}
 ```
 
 Create `src/shell/views/composer.ts`:
 
 ```typescript
-import { CombinedAutocompleteProvider, Editor, type TUI } from "@earendil-works/pi-tui";
+import {
+  CombinedAutocompleteProvider, CURSOR_MARKER, Editor, visibleWidth, type TUI, type TuiMouseEvent, type TuiMouseEventResult,
+} from "@earendil-works/pi-tui";
 import type { CommandDefinition } from "../../core/commands.js";
-import { cyan, dim, gray, yellow } from "./style.js";
+import { accent, dim, faint, fitLine, muted, selected, warn } from "./style.js";
+
+const TOP_MARK = "\u0000top";
+const BOTTOM_MARK = "\u0000bottom";
+/** Columns the frame takes: "│ ❯ " on the left and " │" on the right. */
+const FRAME = 6;
+const LEFT = 3;
+/** Free columns outside the box on each side, in line with the header and the chat. */
+const MARGIN = 2;
+
+export type ComposerTone = "idle" | "working" | "blocked";
+
+const PLACEHOLDER = "Describe an edit, or type / for commands";
+
+/** pi-tui's multi-line editor drawn as a rounded box with a prompt, a title in the top edge and a hint when empty. */
+class StudioEditor extends Editor {
+  title = "";
+  tone: ComposerTone = "idle";
+  private above = 0;
+  private below = 0;
+
+  protected override renderTopBorder(_width: number, hiddenLineCount: number): string { this.above = hiddenLineCount; return TOP_MARK; }
+  protected override renderBottomBorder(_width: number, hiddenLineCount: number): string { this.below = hiddenLineCount; return BOTTOM_MARK; }
+
+  override render(width: number): string[] {
+    const inner = Math.max(1, width - FRAME - MARGIN * 2);
+    const lines = super.render(inner);
+    const top = lines.indexOf(TOP_MARK);
+    const bottom = lines.indexOf(BOTTOM_MARK);
+    if (top < 0 || bottom < 0) return lines;
+    const edge = this.tone === "idle" ? faint : warn;
+    const content = lines.slice(top + 1, bottom);
+    if (this.getText() === "" && content.length > 0) {
+      const cursor = this.focused ? `${CURSOR_MARKER}\u001B[7m \u001B[0m` : " ";
+      content[0] = fitLine(`${cursor}${faint(PLACEHOLDER)}`, inner);
+    }
+    const outside = " ".repeat(MARGIN);
+    const boxWidth = width - MARGIN * 2;
+    const rows = content.map((line, index) => `${outside}${edge("│")} ${index === 0 ? accent("❯") : " "} ${fitLine(line, inner)} ${edge("│")}`);
+    return [
+      outside + this.frameEdge("╭", "╮", boxWidth, [this.title, this.above > 0 ? `↑ ${this.above} more` : ""].filter(Boolean).join(" · "), edge),
+      ...rows,
+      outside + this.frameEdge("╰", "╯", boxWidth, this.below > 0 ? `↓ ${this.below} more` : "", edge),
+      ...lines.slice(bottom + 1).map((line) => `${" ".repeat(LEFT + MARGIN)}${line}`),
+    ];
+  }
+
+  override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    return super.handleMouse({ ...event, x: event.x - LEFT - MARGIN, width: Math.max(1, event.width - FRAME - MARGIN * 2) });
+  }
+
+  private frameEdge(left: string, right: string, width: number, label: string, edge: (text: string) => string): string {
+    const text = label ? ` ${label} ` : "";
+    const room = Math.max(0, width - 2 - 1);
+    const shown = visibleWidth(text) > room - 1 ? text.slice(0, Math.max(0, room - 1)) : text;
+    const fill = Math.max(0, width - 2 - 1 - visibleWidth(shown));
+    return `${edge(`${left}─`)}${shown ? muted(shown) : ""}${edge(`${"─".repeat(fill)}${right}`)}`;
+  }
+}
 
 export interface ComposerOptions {
   commands: readonly CommandDefinition[];
@@ -2395,35 +3469,40 @@ export interface ComposerOptions {
 /** The message box: pi-tui's multi-line editor with slash-command completion. It grows, then scrolls inside itself. */
 export class Composer {
   readonly editor: Editor;
+  private readonly studio: StudioEditor;
 
   constructor(tui: TUI, options: ComposerOptions) {
-    this.editor = new Editor(tui, {
-      borderColor: gray,
-      selectList: { selectedPrefix: cyan, selectedText: cyan, description: dim, scrollInfo: dim, noMatch: dim },
+    this.studio = new StudioEditor(tui, {
+      borderColor: faint,
+      selectList: { selectedPrefix: accent, selectedText: (text) => selected(accent(text)), description: dim, scrollInfo: dim, noMatch: dim },
     });
-    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(
+    this.editor = this.studio;
+    this.studio.setAutocompleteProvider(new CombinedAutocompleteProvider(
       options.commands.map((command) => ({ name: command.name.replace(/^\//, ""), description: `${command.usage}  ${command.description}` })),
       options.cwd,
     ));
-    this.editor.onSubmit = (text) => {
+    this.studio.onSubmit = (text) => {
       const request = text.trim();
       if (!request) return;
-      this.editor.addToHistory(request);
+      this.studio.addToHistory(request);
       this.clear();
       options.onSubmit(request);
     };
   }
 
-  get text(): string { return this.editor.getText(); }
-  isEmpty(): boolean { return this.editor.getText().length === 0; }
-  clear(): void { this.editor.setText(""); }
+  get text(): string { return this.studio.getText(); }
+  isEmpty(): boolean { return this.studio.getText().length === 0; }
+  clear(): void { this.studio.setText(""); }
   /** Put text back, after whatever is already typed. */
   restore(text: string): void {
-    const current = this.editor.getText();
-    this.editor.setText(current ? `${current} ${text}` : text);
+    const current = this.studio.getText();
+    this.studio.setText(current ? `${current} ${text}` : text);
   }
-  /** Yellow while an export or render blocks typing. */
-  setBusy(busy: boolean): void { this.editor.borderColor = busy ? yellow : gray; }
+  /** What the top edge of the box says (for example the permission mode and model) and how it is tinted. */
+  setStatus(title: string, tone: ComposerTone): void {
+    this.studio.title = title;
+    this.studio.tone = tone;
+  }
 }
 ```
 
@@ -2452,12 +3531,41 @@ export class VideoView implements Component {
 }
 ```
 
+Create `src/shell/input/editing-keys.ts`:
+
+```typescript
+import { getKeybindings, type Keybinding, type KeyId } from "@earendil-works/pi-tui";
+
+/**
+ * Extra keys for editing the message box, on top of pi-tui's own (Ctrl+W and Alt+Backspace delete a word, Ctrl+U and
+ * Ctrl+K delete to the start and end of the row):
+ * - Ctrl+Backspace deletes the word before the cursor and Ctrl+Delete the word after it. Windows Terminal reports
+ *   Ctrl+Backspace as a plain backspace byte, which pi-tui already recognises there.
+ * - Ctrl+Shift+Backspace and Ctrl+Shift+Delete delete the whole row before and after the cursor, in terminals that
+ *   can tell those keys apart.
+ */
+const EXTRA_KEYS: ReadonlyArray<readonly [Keybinding, readonly KeyId[]]> = [
+  ["tui.editor.deleteWordBackward", ["ctrl+backspace"]],
+  ["tui.editor.deleteWordForward", ["ctrl+delete"]],
+  ["tui.editor.deleteToLineStart", ["ctrl+shift+backspace"]],
+  ["tui.editor.deleteToLineEnd", ["ctrl+shift+delete"]],
+];
+
+export function applyEditingKeys(): void {
+  const keybindings = getKeybindings();
+  const bindings = { ...keybindings.getUserBindings() };
+  for (const [id, extra] of EXTRA_KEYS) bindings[id] = [...new Set([...keybindings.getKeys(id), ...extra])];
+  keybindings.setUserBindings(bindings);
+}
+```
+
 Create `src/shell/screen.ts`:
 
 ```typescript
-import { HStack, TuiAltScreen, VStack, type Component, type Terminal } from "@earendil-works/pi-tui";
+import { HStack, Spacer, TuiAltScreen, VStack, type Component, type Terminal } from "@earendil-works/pi-tui";
 import type { CommandDefinition } from "../core/commands.js";
 import type { PreviewBackend } from "../core/media.js";
+import { applyEditingKeys } from "./input/editing-keys.js";
 import { resolveKey, type Intent, type KeyContext } from "./input/keymap.js";
 import { shellLayout, type ShellLayout } from "./layout.js";
 import { PreviewHost } from "./preview/preview-host.js";
@@ -2502,7 +3610,8 @@ export interface ScreenOptions {
 /** pi-tui's screen with the editor's layout: header, a band (sidebars and video, or a panel), timeline, chat, composer, status. */
 export function createShellScreen(options: ScreenOptions) {
   const { state, backend, hooks } = options;
-  let layout: ShellLayout = { bandRows: 0, leftSidebarColumns: 0, videoColumns: 0, rightSidebarColumns: 0 };
+  applyEditingKeys();
+  let layout: ShellLayout = { bandRows: 0, leftSidebarColumns: 0, videoColumns: 0, rightSidebarColumns: 0, gap: 0 };
   let layoutKey = "";
   let activeOverlay: { kind: OverlayKind; component: Component } | null = null;
 
@@ -2515,10 +3624,10 @@ export function createShellScreen(options: ScreenOptions) {
   const tui = new TuiAltScreen(preview.terminal, true);
   const bandRows = () => layout.bandRows;
 
-  const transcript = new TranscriptView(() => state.agentModel);
+  const transcript = new TranscriptView();
   const composer = new Composer(tui, { commands: options.commands, cwd: options.cwd, onSubmit: (text) => hooks.onSubmit(text) });
   const header = new HeaderView(state);
-  const timeline = new TimelineView(state, () => ({ leftPad: layout.leftSidebarColumns, videoColumns: layout.videoColumns }));
+  const timeline = new TimelineView(state, () => ({ leftPad: layout.leftSidebarColumns + layout.gap, videoColumns: layout.videoColumns }));
   const controls = new ControlsView(state, () => backend);
   const status = new StatusView(state);
   const video = new VideoView(state, bandRows);
@@ -2526,7 +3635,8 @@ export function createShellScreen(options: ScreenOptions) {
   const right = new AssetsSidebarView(state, bandRows);
 
   function videoRect(): CellRect {
-    return { x: layout.leftSidebarColumns, y: 1, w: layout.videoColumns, h: layout.bandRows };
+    // Below the header and the spacer row under it, after the left sidebar and its gap.
+    return { x: layout.leftSidebarColumns + layout.gap, y: 2, w: layout.videoColumns, h: layout.bandRows };
   }
 
   function band(): Component {
@@ -2535,18 +3645,22 @@ export function createShellScreen(options: ScreenOptions) {
     if (layout.leftSidebarColumns > 0) entries.push({ component: left, basis: layout.leftSidebarColumns, grow: 0, shrink: 0 });
     entries.push({ component: video, basis: 0, grow: 1, minSize: 1 });
     if (layout.rightSidebarColumns > 0) entries.push({ component: right, basis: layout.rightSidebarColumns, grow: 0, shrink: 0 });
-    return new HStack(entries);
+    return new HStack(entries, { gap: layout.gap });
   }
 
   function buildRoot(): Component {
+    const fixed = (component: Component, rows: number) => ({ component, basis: rows, grow: 0, shrink: 0 });
+    // The spacer above the prompt box gives way first when the terminal is short.
+    const breathing = { component: new Spacer(1), basis: 1, grow: 0, shrink: 1, minSize: 0 };
     const chat = { component: transcript.view, basis: 0, grow: 1, minSize: 1 };
-    const tail = [{ component: composer.editor, basis: "auto" as const, shrink: 1, minSize: 1 }, { component: status, basis: 1, grow: 0, shrink: 0 }];
-    if (state.chatExpanded) return new VStack([{ component: header, basis: 1, grow: 0, shrink: 0 }, chat, ...tail]);
+    const tail = [breathing, { component: composer.editor, basis: "auto" as const, shrink: 1, minSize: 1 }, fixed(status, 1)];
+    if (state.chatExpanded) return new VStack([fixed(header, 1), fixed(new Spacer(1), 1), chat, ...tail]);
     return new VStack([
-      { component: header, basis: 1, grow: 0, shrink: 0 },
-      { component: band(), basis: layout.bandRows, grow: 0, shrink: 0 },
-      { component: timeline, basis: 1, grow: 0, shrink: 0 },
-      { component: controls, basis: 1, grow: 0, shrink: 0 },
+      fixed(header, 1),
+      fixed(new Spacer(1), 1),
+      fixed(band(), layout.bandRows),
+      fixed(timeline, 1),
+      fixed(controls, 1),
       chat,
       ...tail,
     ]);
@@ -2575,7 +3689,10 @@ export function createShellScreen(options: ScreenOptions) {
 
   function sync(): void {
     transcript.sync(state.messages);
-    composer.setBusy(state.busy);
+    composer.setStatus(
+      state.agentRunning ? "working · Enter steers · Esc stops" : state.busy ? (state.loader?.stage ?? "working") : `${state.permissionMode} · ${state.agentModel}`,
+      state.busy ? "blocked" : state.agentRunning ? "working" : "idle",
+    );
     const restored = state.takeComposerRestore();
     if (restored) composer.restore(restored);
     syncOverlay();
@@ -2616,8 +3733,8 @@ export function createShellScreen(options: ScreenOptions) {
     return { consume: true };
   });
   const unsubscribe = state.subscribe(sync);
-  relayout();
   tui.setFocus(composer.editor);
+  sync();
 
   return {
     tui, preview, composer, transcript,
@@ -2640,7 +3757,7 @@ npx tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tes
 npm test
 ```
 
-Expected: 8 passed in `shell-views` and 12 in `shell-screen`, then the whole suite: 155 tests, 154 passed, 1 skipped (the live OpenRouter test), 0 failed.
+Expected: 10 passed in `shell-views` and 13 in `shell-screen`, then the whole suite: 161 tests, 160 passed, 1 skipped (the live OpenRouter test), 0 failed.
 
 - [ ] **Step 5: Commit**
 
@@ -2835,8 +3952,8 @@ Add `shell-overlays` to the `test` script:
      "build": "tsup",
      "check": "tsc --noEmit",
      "dev": "tsx src/cli.tsx",
--    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/transcription.test.js",
-+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/transcription.test.js",
+-    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/transcription.test.js",
++    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/transcription.test.js",
      "quality": "npm run check && npm test && npm run build",
      "release:check": "npm run quality && npm pack --dry-run",
      "prepublishOnly": "npm run quality"
@@ -2948,7 +4065,7 @@ Create `src/shell/overlays/help.ts`:
 
 ```typescript
 import { matchesKey } from "@earendil-works/pi-tui";
-import { bold, cyan, dim } from "../views/style.js";
+import { bold, accent, dim } from "../views/style.js";
 import { box, fill, Panel, type PanelContext } from "./frame.js";
 
 export class HelpPanel extends Panel {
@@ -2956,7 +4073,7 @@ export class HelpPanel extends Panel {
 
   render(width: number): string[] {
     const lines = [
-      bold(cyan("DumbEditor controls")),
+      bold(accent("DumbEditor controls")),
       "Ctrl+P play/pause  ←/→ seek 5s  +/- volume  [ set in  ] set out",
       "/clip-remove FROM TO [FROM TO...]  /clip-keep FROM TO",
       "/speed FROM TO FACTOR  /mute FROM TO  /crop WIDTHxHEIGHT [X,Y]",
@@ -2964,13 +4081,14 @@ export class HelpPanel extends Panel {
       "/export [path] popup  /version-limits [N]  /model model picker",
       "/bg-music music browser  /assets asset browser  (also Ctrl+O)",
       "/permissions [ask|auto]  /budget [USD]  /compact",
+      dim("Editing: Ctrl+Backspace deletes a word, Ctrl+Delete the next one, Ctrl+U / Ctrl+K the row."),
       dim("Type / for commands, use ↑/↓ to choose, and Tab to complete."),
       dim("↑/↓ scroll chat, PgUp/PgDn move a page, Ctrl+G expands chat."),
       dim("While the agent works: Enter sends a message that steers it, Esc stops it."),
       dim(`Ask ${this.options.model()} normally: “remove the first two seconds and the last ten”.`),
       dim("Esc closes this panel"),
     ];
-    return fill(box(lines, width, { border: "round", color: cyan }), width, this.rows);
+    return fill(box(lines, width, { border: "round", color: accent }), width, this.rows);
   }
 
   handleInput(data: string): void {
@@ -3019,7 +4137,7 @@ Create `src/shell/overlays/projects.ts`:
 import { basename } from "node:path";
 import { matchesKey } from "@earendil-works/pi-tui";
 import type { ProjectSummary } from "../../core/project.js";
-import { bold, cyan, dim, spaceBetween } from "../views/style.js";
+import { bold, accent, dim, spaceBetween } from "../views/style.js";
 import { box, fill, listWindow, Panel, row, wrapIndex, type PanelContext } from "./frame.js";
 
 export interface ProjectsPanelOptions {
@@ -3045,17 +4163,17 @@ export class ProjectsPanel extends Panel {
     const capacity = Math.max(1, this.rows - 6);
     const { start, end } = listWindow(projects.length, this.selected, capacity);
     const lines = [
-      spaceBetween(bold(cyan("Projects")), dim(`${projects.length} saved`), Math.max(10, width - 4)),
+      spaceBetween(bold(accent("Projects")), dim(`${projects.length} saved`), Math.max(10, width - 4)),
       ...(projects.length === 0 ? [dim("No saved projects found. Open a video to create one.")] : []),
       ...projects.slice(start, end).map((project, offset) => {
         const index = start + offset;
         const active = same(project.projectDir, activeProjectDir);
         const text = `${index === this.selected ? "›" : " "} ${active ? "●" : "○"} ${project.name}  ${basename(project.sourcePath)} · ${project.versionCount} versions · ${project.currentVersionId}`;
-        return row(text, index === this.selected, cyan);
+        return row(text, index === this.selected, accent);
       }),
       dim("↑/↓ browse · Enter open · Esc close"),
     ];
-    return fill(box(lines, width, { border: "round", color: cyan }), width, this.rows);
+    return fill(box(lines, width, { border: "round", color: accent }), width, this.rows);
   }
 
   handleInput(data: string): void {
@@ -3125,7 +4243,7 @@ export class ApprovalPanel extends Panel {
       }).join("  "),
       "←/→ or Tab chooses · Enter confirms · Esc denies",
     ];
-    return centered(box(lines, Math.min(86, width - 4), { border: "double", color: yellow, paddingX: 2 }), width, this.rows);
+    return centered(box(lines, Math.min(86, width - 4), { border: "round", color: yellow, paddingX: 2 }), width, this.rows);
   }
 
   handleInput(data: string): void {
@@ -3145,7 +4263,7 @@ Create `src/shell/overlays/choice.ts`:
 ```typescript
 import { Input, matchesKey } from "@earendil-works/pi-tui";
 import type { ChoicePrompt } from "../state/shell-state.js";
-import { bold, cyan, dim, inverse } from "../views/style.js";
+import { bold, accent, dim, inverse } from "../views/style.js";
 import { box, centered, isPrintable, Panel, wrapIndex, type PanelContext } from "./frame.js";
 
 /** The agent asks the user to pick one option, optionally with a typed answer. Esc cancels. */
@@ -3161,7 +4279,7 @@ export class ChoicePanel extends Panel {
     const panelWidth = Math.min(92, width - 4);
     this.custom.focused = this.focused && this.customActive;
     const lines = [
-      bold(cyan("Choose a direction")),
+      bold(accent("Choose a direction")),
       request.question,
       "",
       ...request.options.map((option, index) => {
@@ -3170,12 +4288,12 @@ export class ChoicePanel extends Panel {
       }),
       ...(request.allowCustom ? [
         "",
-        this.customActive ? cyan("Custom answer") : "Custom answer",
+        this.customActive ? accent("Custom answer") : "Custom answer",
         ...this.custom.render(Math.max(8, panelWidth - 6)),
       ] : []),
       dim("↑/↓ chooses · Tab custom answer · Enter sends · Esc cancels"),
     ];
-    return centered(box(lines, panelWidth, { border: "double", color: cyan, paddingX: 2 }), width, this.rows);
+    return centered(box(lines, panelWidth, { border: "round", color: accent, paddingX: 2 }), width, this.rows);
   }
 
   handleInput(data: string): void {
@@ -3210,7 +4328,7 @@ import type { AgentAsset } from "../../core/agent-workspace.js";
 import { extractFrame, streamPreview, type PreviewSize, type PreviewStream } from "../../core/media.js";
 import { formatUsd } from "../../core/usage.js";
 import { assetIcon, boxed } from "../views/sidebars.js";
-import { bold, cyan, dim, green, inverse, shorten, spaceBetween } from "../views/style.js";
+import { bold, accent, dim, green, inverse, shorten, spaceBetween } from "../views/style.js";
 import { box, fill, isPrintable, listWindow, Panel, wrapIndex, type PanelContext } from "./frame.js";
 
 export interface AssetPanelOptions {
@@ -3245,20 +4363,20 @@ export class AssetPanel extends Panel {
     const listWidth = Math.max(26, Math.floor(width * 0.38));
     const detailWidth = Math.max(20, inner - listWidth - 2);
     const room = Math.max(1, this.rows - 5);
-    const header = spaceBetween(bold(cyan("Assets")), dim("↑/↓ select · Space play · Ctrl+O/Esc close · type to chat"), inner);
+    const header = spaceBetween(bold(accent("Assets")), dim("↑/↓ select · Space play · Ctrl+O/Esc close · type to chat"), inner);
     if (assets.length === 0) {
-      return fill(box([header, dim("No project assets yet. Ask the editor agent to create an image, sound, video, or subtitles.")], width, { border: "single", color: cyan }), width, this.rows);
+      return fill(box([header, dim("No project assets yet. Ask the editor agent to create an image, sound, video, or subtitles.")], width, { border: "round", color: accent }), width, this.rows);
     }
     const { start, end } = listWindow(assets.length, this.selected, room - 2);
     const list = boxed(assets.slice(start, end).map((asset, offset) => {
       const index = start + offset;
       const cost = asset.costUsd === undefined ? "cost unavailable" : formatUsd(asset.costUsd, asset.costEstimated);
       const text = `${index === this.selected ? "›" : " "} ${assetIcon(asset.kind)} ${asset.description} · ${cost}`;
-      return index === this.selected ? inverse(cyan(text)) : text;
+      return index === this.selected ? inverse(accent(text)) : text;
     }), listWidth, Math.min(room, end - start + 2));
     const details = selected ? this.details(selected, detailWidth, room) : [];
     const rows = Array.from({ length: room }, (_, index) => `${list[index] ?? " ".repeat(listWidth)}  ${details[index] ?? ""}`);
-    return fill(box([header, ...rows], width, { border: "single", color: cyan }), width, this.rows);
+    return fill(box([header, ...rows], width, { border: "round", color: accent }), width, this.rows);
   }
 
   handleInput(data: string): void {
@@ -3290,9 +4408,9 @@ export class AssetPanel extends Panel {
       `Model: ${asset.model ?? "local"}`,
       `Cost: ${asset.costUsd === undefined ? "unavailable" : formatUsd(asset.costUsd, asset.costEstimated)}`,
       ...(asset.license ? [`License: ${shorten(asset.license, width - 9)}`] : []),
-      ...(playable ? [this.options.playing() ? green("▶ playing preview") : cyan("Space plays this asset")] : []),
-      ...(asset.kind === "image" ? [cyan("Image saved and ready for the editor agent to place in the video.")] : []),
-      ...(asset.kind === "file" ? [cyan("Subtitle or workspace file saved as a reusable asset.")] : []),
+      ...(playable ? [this.options.playing() ? green("▶ playing preview") : accent("Space plays this asset")] : []),
+      ...(asset.kind === "image" ? [accent("Image saved and ready for the editor agent to place in the video.")] : []),
+      ...(asset.kind === "file" ? [accent("Subtitle or workspace file saved as a reusable asset.")] : []),
     ];
     if (asset.kind === "image" || asset.kind === "video") {
       const previewRows = Math.max(2, rows - lines.length - 1);
@@ -3339,7 +4457,7 @@ npx tsc -p tsconfig.test.json && node --test .test-dist/tests/shell-overlays.tes
 npm test
 ```
 
-Expected: 8 passed in `shell-overlays`, then the whole suite: 163 tests, 162 passed, 1 skipped (the live OpenRouter test), 0 failed.
+Expected: 8 passed in `shell-overlays`, then the whole suite: 169 tests, 168 passed, 1 skipped (the live OpenRouter test), 0 failed.
 
 - [ ] **Step 5: Commit**
 
@@ -3790,8 +4908,8 @@ Add `shell-panels` to the `test` script:
      "build": "tsup",
      "check": "tsc --noEmit",
      "dev": "tsx src/cli.tsx",
--    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/transcription.test.js",
-+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/shell-panels.test.js .test-dist/tests/transcription.test.js",
+-    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/transcription.test.js",
++    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/shell-panels.test.js .test-dist/tests/transcription.test.js",
      "quality": "npm run check && npm test && npm run build",
      "release:check": "npm run quality && npm pack --dry-run",
      "prepublishOnly": "npm run quality"
@@ -3922,7 +5040,7 @@ import { Input, matchesKey } from "@earendil-works/pi-tui";
 import type { ProviderModel } from "../../core/models.js";
 import type { DumbEditorSettings, ModelProvider, ModelSlot } from "../../core/settings.js";
 import type { Loader } from "../state/shell-state.js";
-import { bold, cyan, dim, inverse, yellow } from "../views/style.js";
+import { bold, accent, dim, inverse, yellow } from "../views/style.js";
 import { box, centered, isPrintable, listWindow, Panel, wrapIndex, type PanelContext } from "./frame.js";
 import {
   capabilityDefinition, configuredCapability, configuredModel, filteredPickerModels, initialModelPicker, MODEL_CAPABILITIES,
@@ -3955,7 +5073,7 @@ export class ModelPanel extends Panel {
     const lines = [this.header(), ...body.slice(0, inner - 2)];
     while (lines.length < inner - 1) lines.push("");
     lines.push(this.footer());
-    return centered(box(lines, modalWidth, { border: "double", color: cyan, paddingX: 2 }), width, this.rows);
+    return centered(box(lines, modalWidth, { border: "round", color: accent, paddingX: 2 }), width, this.rows);
   }
 
   handleInput(data: string): void {
@@ -4047,7 +5165,7 @@ export class ModelPanel extends Panel {
     const capability = capabilityDefinition(picker.capability);
     const path = picker.step === "capability" ? "Capability"
       : picker.step === "provider" ? `${capability.label} / provider` : `${capability.label} / ${providerName(picker.provider)}`;
-    return `${bold(cyan("Select default model"))}  ${dim(path)}`;
+    return `${bold(accent("Select default model"))}  ${dim(path)}`;
   }
 
   private footer(): string {
@@ -4090,7 +5208,7 @@ export class ModelPanel extends Panel {
       for (const [offset, model] of models.slice(start, end).entries()) {
         const label = `${model.id === current ? "* " : ""}${model.name}${model.name === model.id ? "" : ` | ${model.id}`}`;
         const text = `${start + offset === picker.selectedIndex ? "> " : "  "}${cell(label, columns.model)} ${cell(model.inputPrice ?? "-", columns.price)} ${cell(model.outputPrice ?? "-", columns.price)}`;
-        lines.push(start + offset === picker.selectedIndex ? inverse(cyan(text)) : text);
+        lines.push(start + offset === picker.selectedIndex ? inverse(accent(text)) : text);
       }
       lines.push(dim(`${models.length} models${models.length > room ? ` | showing ${start + 1}-${end}` : ""}`), dim(price.note));
     }
@@ -4100,7 +5218,7 @@ export class ModelPanel extends Panel {
 
 function choice(selected: boolean, primary: string, secondary: string): string {
   const text = `${selected ? "> " : "  "}${primary}  ${secondary}`;
-  return selected ? inverse(cyan(text)) : text;
+  return selected ? inverse(accent(text)) : text;
 }
 
 function columnWidths(width: number): { model: number; price: number } {
@@ -4119,7 +5237,7 @@ Create `src/shell/overlays/music.ts`:
 ```typescript
 import { Input, matchesKey } from "@earendil-works/pi-tui";
 import { listMusicTracks, searchMusicTracks, type MusicTrack } from "../../core/music-catalog.js";
-import { bold, cyan, dim, inverse, yellow } from "../views/style.js";
+import { bold, accent, dim, inverse, yellow } from "../views/style.js";
 import { box, fill, isPrintable, listWindow, Panel, setValueAtEnd, wrapIndex, type PanelContext } from "./frame.js";
 
 export interface MusicPanelServices {
@@ -4156,14 +5274,14 @@ export class MusicPanel extends Panel {
     const { start, end } = listWindow(tracks.length, this.selected, this.rows - 12);
     const highlighted = tracks[this.selected];
     const lines = [
-      `${bold(cyan("Background music"))}  ${dim("open license catalog")}`,
+      `${bold(accent("Background music"))}  ${dim("open license catalog")}`,
       ...this.search.render(Math.max(10, width - 8)),
       dim("  TITLE                    MOOD                 LENGTH   LICENSE"),
       ...(tracks.length === 0 ? [yellow("No tracks match this search.")] : tracks.slice(start, end).map((track, offset) => {
         const index = start + offset;
         const marker = this.previewId === track.id ? "▶" : this.selectedId === track.id ? "✓" : " ";
         const text = `${index === this.selected ? "›" : " "} ${marker} ${fit(track.title, 24)} ${fit(track.moods.slice(0, 2).join(", "), 20)} ${fit(formatDuration(track.durationSeconds), 8)} CC BY 4.0`;
-        return index === this.selected ? inverse(cyan(text)) : text;
+        return index === this.selected ? inverse(accent(text)) : text;
       })),
       "",
       ...(highlighted
@@ -4171,7 +5289,7 @@ export class MusicPanel extends Panel {
         : [dim("Try a mood such as bright, calm, reflective, or uplifting.")]),
       dim("↑/↓ choose · Space preview/stop · Enter select · type to search · Ctrl+U clear · Ctrl+K unselect · Esc close"),
     ];
-    return fill(box(lines, width, { border: "round", color: cyan, paddingX: 2 }), width, this.rows);
+    return fill(box(lines, width, { border: "round", color: accent, paddingX: 2 }), width, this.rows);
   }
 
   handleInput(data: string): void {
@@ -4249,7 +5367,7 @@ Create `src/shell/overlays/export.ts`:
 ```typescript
 import { Input, matchesKey } from "@earendil-works/pi-tui";
 import { EXPORT_FORMATS, EXPORT_PRESET_DETAILS, EXPORT_PRESETS, exportDestination, type ExportFormat, type ExportPreset } from "../../core/export.js";
-import { bold, cyan, dim, gray, inverse } from "../views/style.js";
+import { bold, accent, dim, gray, inverse } from "../views/style.js";
 import { box, centered, Panel, setValueAtEnd, type PanelContext } from "./frame.js";
 
 export type ExportFocus = "path" | "format" | "compression";
@@ -4285,24 +5403,24 @@ export class ExportPanel extends Panel {
     const modalWidth = Math.max(36, Math.min(96, width - 4));
     const preset = EXPORT_PRESET_DETAILS.find((item) => item.id === this.preset) ?? EXPORT_PRESET_DETAILS[2]!;
     const lines = [
-      bold(cyan("Export video")),
+      bold(accent("Export video")),
       dim("Destination"),
-      ...box(this.path.render(Math.max(8, modalWidth - 10)), modalWidth - 6, { border: "round", color: this.focus === "path" ? cyan : gray }),
+      ...box(this.path.render(Math.max(8, modalWidth - 10)), modalWidth - 6, { border: "round", color: this.focus === "path" ? accent : gray }),
       "",
       dim("Format"),
-      (this.focus === "format" ? cyan : (text: string) => text)(`${this.format === "mp4" ? "› " : "  "}[ MP4 ]    ${this.format === "mkv" ? "› " : "  "}[ MKV ]`),
+      (this.focus === "format" ? accent : (text: string) => text)(`${this.format === "mp4" ? "› " : "  "}[ MP4 ]    ${this.format === "mkv" ? "› " : "  "}[ MKV ]`),
       "",
       dim("Compression"),
       ...EXPORT_PRESET_DETAILS.map((item) => {
         const text = `${item.id === this.preset ? "›" : " "} ${item.label.padEnd(18)} ${item.video} · ${item.audio}`;
-        return item.id === this.preset && this.focus === "compression" ? inverse(cyan(text)) : item.id === this.preset ? text : dim(text);
+        return item.id === this.preset && this.focus === "compression" ? inverse(accent(text)) : item.id === this.preset ? text : dim(text);
       }),
       "",
       preset.description,
       dim("MP4 is broadly compatible. MKV is flexible for local playback and archiving."),
       dim("Tab section · arrows edit/select · type destination · Enter export · Esc close"),
     ];
-    return centered(box(lines, modalWidth, { border: "double", color: cyan, paddingX: 2 }), width, this.rows);
+    return centered(box(lines, modalWidth, { border: "round", color: accent, paddingX: 2 }), width, this.rows);
   }
 
   handleInput(data: string): void {
@@ -4339,7 +5457,7 @@ npx tsc -p tsconfig.test.json && node --test .test-dist/tests/shell-panels.test.
 npm test
 ```
 
-Expected: 7 passed in `shell-panels` and 7 in `model-picker`, then the whole suite: 170 tests, 169 passed, 1 skipped (the live OpenRouter test), 0 failed.
+Expected: 7 passed in `shell-panels` and 7 in `model-picker`, then the whole suite: 176 tests, 175 passed, 1 skipped (the live OpenRouter test), 0 failed.
 
 - [ ] **Step 5: Commit**
 
@@ -4420,7 +5538,7 @@ test("opens a video: header, play bar, status and the first picture appear", { t
   const t = await boot();
   try {
     const rows = t.fake.screen();
-    assert.match(rows[0] ?? "", /^DumbEditor +source · .+ · v0000$/);
+    assert.match(rows[0] ?? "", /^ {2}◆ DumbEditor {2}› {2}source {2}v0000 +● ready *$/);
     assert.match(t.app.state.messages.at(-1)?.text ?? "", /^Opened source · .+ · 320x180 · 00:04\.0$/);
     await until(() => sixelPlacements(t.fake.writes.join("")).length > 0, 20_000, "the first picture");
     assert.deepEqual(t.app.state.versions.map((version) => version.id), ["v0000"]);
@@ -4833,6 +5951,7 @@ export class ShellApp implements CommandApp {
   private assetProcess: ChildProcess | null = null;
   private assetPlaying = false;
   private disposed = false;
+  private readonly spinnerTimer: NodeJS.Timeout;
 
   constructor(private readonly options: ShellAppOptions) {
     this.backend = options.backend ?? detectPreviewBackend();
@@ -4854,6 +5973,9 @@ export class ShellApp implements CommandApp {
     });
     this.audio = new AudioController((message) => this.state.setStatus(message), options.audio);
     this.state.subscribe(() => this.onStateChange());
+    // Animate the busy spinner; it draws nothing while nothing is working.
+    this.spinnerTimer = setInterval(() => this.state.tickSpinner(), 110);
+    this.spinnerTimer.unref();
   }
 
   /** Start drawing, load settings, and open the video named at launch. */
@@ -4872,6 +5994,7 @@ export class ShellApp implements CommandApp {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    clearInterval(this.spinnerTimer);
     this.engine?.abort();
     this.unbindEngine?.();
     this.unbindEditor?.();
@@ -4921,7 +6044,7 @@ export class ShellApp implements CommandApp {
       engine.submit(request);
     } catch (error) {
       await this.answer(message(error));
-      state.setStatus(`${state.agentModel} request failed`);
+      state.setStatus("Request failed");
     }
   }
 
@@ -5441,9 +6564,9 @@ After `npm uninstall`, apply the remaining changes to `package.json` (the `dev` 
      "build": "tsup",
      "check": "tsc --noEmit",
 -    "dev": "tsx src/cli.tsx",
--    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/shell-panels.test.js .test-dist/tests/transcription.test.js",
+-    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/layout.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/text-layout.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/terminal-layers.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/shell-panels.test.js .test-dist/tests/transcription.test.js",
 +    "dev": "tsx src/cli.ts",
-+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/shell-panels.test.js .test-dist/tests/shell-app.test.js .test-dist/tests/transcription.test.js",
++    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .test-dist/tests/time.test.js .test-dist/tests/preview.test.js .test-dist/tests/editor.test.js .test-dist/tests/advanced-editor.test.js .test-dist/tests/export.test.js .test-dist/tests/commands.test.js .test-dist/tests/music.test.js .test-dist/tests/model-picker.test.js .test-dist/tests/projects.test.js .test-dist/tests/keys.test.js .test-dist/tests/pi-layer.test.js .test-dist/tests/compaction.test.js .test-dist/tests/editor-state.test.js .test-dist/tests/actions.test.js .test-dist/tests/session-store.test.js .test-dist/tests/engine.test.js .test-dist/tests/live-openrouter.test.js .test-dist/tests/shell-layout.test.js .test-dist/tests/shell-state.test.js .test-dist/tests/shell-keymap.test.js .test-dist/tests/shell-preview.test.js .test-dist/tests/stream-preview.test.js .test-dist/tests/shell-views.test.js .test-dist/tests/shell-screen.test.js .test-dist/tests/shell-overlays.test.js .test-dist/tests/shell-panels.test.js .test-dist/tests/shell-app.test.js .test-dist/tests/transcription.test.js",
      "quality": "npm run check && npm test && npm run build",
      "release:check": "npm run quality && npm pack --dry-run",
      "prepublishOnly": "npm run quality"
@@ -5456,7 +6579,16 @@ Apply this change to `README.md`:
 ````diff
 --- a/README.md
 +++ b/README.md
-@@ -261,7 +261,7 @@
+@@ -250,6 +250,8 @@
+ | `Esc` | Stop the agent when the input is empty, minimize expanded chat, clear input, or close a panel |
+ | `Ctrl+C` | Stop the agent while it works; otherwise quit and terminate preview processes |
+ | `Ctrl+O` | Open or close the project asset browser |
++| `Ctrl+Backspace` / `Ctrl+Delete` | Delete the word before or after the cursor in the message box |
++| `Ctrl+U` / `Ctrl+K` | Delete everything before or after the cursor on the row |
+ 
+ While an agent request runs, its current stage appears in the header above the video. Chat scrolling, seeking, volume, and play/pause remain available during planning, tool review, transcription, and asset generation. DumbEditor pauses preview transport only while FFmpeg is rendering or validating a changed video and while the new version is being saved.
+ 
+@@ -261,7 +263,7 @@
  
  ## Preview backend
  
@@ -5465,7 +6597,7 @@ Apply this change to `README.md`:
  
  ```powershell
  $env:DUMBEDITOR_PREVIEW = "blocks"
-@@ -328,7 +328,7 @@
+@@ -328,7 +330,7 @@
  npm run release:check
  ```
  
@@ -5483,7 +6615,7 @@ npx tsc --noEmit
 npm run quality
 ```
 
-Expected: `tsc` prints nothing; `npm run quality` runs 172 tests, 171 passed, 1 skipped (the live OpenRouter test), 0 failed and finishes with `Build success`. Then:
+Expected: `tsc` prints nothing; `npm run quality` runs 178 tests, 177 passed, 1 skipped (the live OpenRouter test), 0 failed and finishes with `Build success`. Then:
 
 ```bash
 node dist/cli.js --version
