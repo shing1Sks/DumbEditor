@@ -41,5 +41,5 @@ taken from the `@fontsource/noto-sans` package. They are used under the SIL Open
 
 ## @napi-rs/canvas (optional)
 
-An optional dependency, loaded only to draw text as images when FFmpeg has no libass. MIT License,
+Installed on macOS and Linux only, through the `dumbeditor-canvas` wrapper package (npm skips it on Windows), and loaded only to draw text as images when FFmpeg has no libass. MIT License,
 https://github.com/Brooooooklyn/canvas.

@@ -41,11 +41,25 @@ export function overrideCanvasLoader(loader: (() => Promise<CanvasModule | null>
   override = loader;
 }
 
+/**
+ * The package npm installs on macOS and Linux only (its `os` field skips it on Windows, where FFmpeg has libass).
+ * The specifier is a variable so the compiler does not need the package to be linked on every machine.
+ */
+const CANVAS_PACKAGE = "dumbeditor-canvas";
+
+async function importCanvas(): Promise<CanvasModule> {
+  try {
+    return (await import(CANVAS_PACKAGE)) as CanvasModule;
+  } catch {
+    // A checkout without that package linked (development on Windows): use the library itself, a dev dependency.
+    return import("@napi-rs/canvas");
+  }
+}
+
 /** The optional canvas library with the bundled fonts registered, or null when it is not installed. */
 export function loadCanvas(): Promise<CanvasModule | null> {
   if (override) return override();
-  loaded ??= import("@napi-rs/canvas")
-    .then((canvas) => { registerFonts(canvas); return canvas; }, () => null);
+  loaded ??= importCanvas().then((canvas) => { registerFonts(canvas); return canvas; }, () => null);
   return loaded;
 }
 
