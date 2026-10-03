@@ -53,3 +53,11 @@ test("the wrapper ships what it needs and the main package ships the fonts", () 
   assert.ok(read("package.json").files?.includes("assets"), "the bundled fonts are published");
   assert.ok(existsSync(join(root, "assets/fonts/OFL.txt")));
 });
+
+test("the changelog is shipped and its newest entry is the version being published", () => {
+  const main = read("package.json");
+  assert.ok(main.files?.includes("CHANGELOG.md"), "listed in files");
+  const log = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+  const newest = /^## (\d+\.\d+\.\d+)\b/m.exec(log)?.[1];
+  assert.equal(newest, main.version, "bump the version and the changelog together");
+});

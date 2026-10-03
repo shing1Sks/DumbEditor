@@ -20,6 +20,7 @@ export interface CommandApp {
   openVideo(path: string): Promise<void>;
   openProjects(): Promise<void>;
   openModelPicker(): void;
+  openModePicker(): void;
   openMusic(query: string): Promise<void>;
   openAssets(): void;
   openExport(requested: string): void;
@@ -27,13 +28,14 @@ export interface CommandApp {
   applyEdit(edit: DirectEdit, request: string): Promise<void>;
   changeVersion(reference: string): Promise<void>;
   setPermissionMode(mode: "ask" | "auto"): Promise<void>;
+  togglePermissionMode(): Promise<"ask" | "auto">;
   setSpendCeiling(usd: number): Promise<void>;
   setVersionLimit(limit: number): Promise<void>;
   compact(): Promise<void>;
 }
 
 /** Commands that cannot disturb a running agent; everything else waits until it finishes or is stopped. */
-const SAFE_DURING_RUN = new Set(["/help", "/chat", "/status", "/clear", "/play", "/pause", "/quit", "/exit", "/permissions", "/budget", "/version", "/versions", "/assets"]);
+const SAFE_DURING_RUN = new Set(["/help", "/chat", "/status", "/clear", "/play", "/pause", "/quit", "/exit", "/mode", "/permissions", "/budget", "/version", "/versions", "/assets"]);
 
 export async function runCommand(app: CommandApp, line: string): Promise<void> {
   const { state } = app;
@@ -52,9 +54,9 @@ export async function runCommand(app: CommandApp, line: string): Promise<void> {
   if (command === "/projects") { await app.openProjects(); return; }
   if (command === "/model") { app.openModelPicker(); return; }
   if (command === "/bg-music") { await app.openMusic(argument); return; }
-  if (command === "/permissions") {
-    if (!argument) { await app.answer(`Agent permission mode: ${app.settings.agent.permissionMode}. Use /permissions ask or /permissions auto.`); return; }
-    if (argument !== "ask" && argument !== "auto") { await app.answer("Usage: /permissions [ask|auto]"); return; }
+  if (command === "/mode" || command === "/permissions") {
+    if (!argument) { app.openModePicker(); return; }
+    if (argument !== "ask" && argument !== "auto") { await app.answer("Usage: /mode  (pick from the list), or /mode ask, /mode auto"); return; }
     await app.setPermissionMode(argument);
     await app.answer(`Agent permission mode set to ${argument}.`);
     return;

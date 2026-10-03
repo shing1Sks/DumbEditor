@@ -22,7 +22,7 @@ export const COMMANDS: CommandDefinition[] = [
   { name: "/export", usage: "/export [OUTPUT PATH]", description: "Open format and compression popup" },
   { name: "/bg-music", usage: "/bg-music [QUERY]", description: "Browse open-license background music" },
   { name: "/assets", usage: "/assets", description: "Browse generated and project assets" },
-  { name: "/permissions", usage: "/permissions [ask|auto]", description: "Show or set agent approval mode" },
+  { name: "/mode", usage: "/mode", description: "Choose whether the agent asks first or acts on its own" },
   { name: "/budget", usage: "/budget [USD]", description: "Show or set the per-run spend limit (0 turns it off)" },
   { name: "/compact", usage: "/compact", description: "Summarize earlier conversation to free context" },
   { name: "/model", usage: "/model", description: "Choose a capability, provider, and model" },

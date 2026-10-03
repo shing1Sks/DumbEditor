@@ -28,6 +28,8 @@ export interface ScreenHooks {
   onInterrupt(): void;
   onAbortAgent(): void;
   onOpenAssets(): void;
+  /** Shift+Tab: switch the agent between asking before each tool and running them on its own. */
+  onTogglePermissions(): void;
 }
 
 export interface ScreenOptions {
@@ -153,6 +155,7 @@ export function createShellScreen(options: ScreenOptions) {
       case "interrupt": hooks.onInterrupt(); break;
       case "abort-agent": hooks.onAbortAgent(); break;
       case "open-assets": hooks.onOpenAssets(); break;
+      case "toggle-permissions": hooks.onTogglePermissions(); break;
       case "toggle-chat-focus": state.toggleChatExpanded(); break;
       case "collapse-chat": state.setChatExpanded(false); break;
       case "clear-composer": composer.clear(); tui.requestRender(); break;

@@ -5,7 +5,7 @@ import { EMPTY_USAGE_SUMMARY, type UsageSummary } from "../../core/usage.js";
 import type { ChatMessage, MediaInfo, Selection, VersionEntry } from "../../types.js";
 import { isVideoMutationStage } from "../work-state.js";
 
-export type OverlayKind = "help" | "history" | "model" | "music" | "export" | "assets" | "projects" | "approval" | "choice";
+export type OverlayKind = "help" | "history" | "model" | "music" | "export" | "assets" | "projects" | "approval" | "choice" | "mode";
 export type ApprovalRequest = Extract<EngineEvent, { type: "approval_request" }>;
 export type ChoicePrompt = ChoiceRequest & { id: string };
 
