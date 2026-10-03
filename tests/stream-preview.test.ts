@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { audioPlayerArguments, streamRawPreview } from "../src/core/media.js";
+import { audioPlayerArguments, extractRawFrame, streamRawPreview } from "../src/core/media.js";
+import { stillFrame } from "../src/shell/preview/playback.js";
 import { makeProject } from "./helpers/project.js";
 
 test("starts at the seek point right away, then delivers frames in real time", { timeout: 60_000 }, async () => {
@@ -54,4 +55,22 @@ test("plays only the sound, so seeking lands exactly where asked instead of on t
   const args = audioPlayerArguments("C:/videos/clip.mp4", 11.4, 70);
   assert.deepEqual(args, ["-nodisp", "-vn", "-autoexit", "-loglevel", "error", "-ss", "11.400", "-volume", "70", "C:/videos/clip.mp4"]);
   assert.equal(audioPlayerArguments("a.mp3", -2, 5).includes("0.000"), true, "a negative start is clamped to zero");
+});
+
+test("a still picture at the very end of the video is a whole picture, and so is the one before it", { timeout: 60_000 }, async () => {
+  // Seeking to the end (or playing to it) asks for a frame at exactly the duration, where the file has none.
+  const project = await makeProject();
+  try {
+    const { filePath } = project.store.current;
+    const duration = project.store.current.duration;
+    const size = { width: 160, height: 90 };
+    const wanted = size.width * size.height * 3;
+    const signal = new AbortController().signal;
+    assert.ok((await extractRawFrame(filePath, duration, size, signal)).length < wanted, "the plain request really comes back empty");
+    for (const time of [duration, duration - 0.02, duration / 2, 0]) {
+      assert.equal((await stillFrame(filePath, time, duration, size, signal)).length, wanted, `a whole picture at ${time}`);
+    }
+  } finally {
+    await project.cleanup();
+  }
 });

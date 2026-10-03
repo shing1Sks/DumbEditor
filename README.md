@@ -30,10 +30,10 @@ The goal is capable software with a small surface: one terminal, one conversatio
 ## DumbEditor in action
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/shing1Sks/DumbEditor/master/docs/images/dumbeditor-agent-transcription.png" alt="DumbEditor running an agent-driven subtitle transcription inside the terminal" width="100%">
+  <img src="https://raw.githubusercontent.com/shing1Sks/DumbEditor/master/docs/images/dumbeditor.png" alt="DumbEditor playing a captioned video in the terminal, with versions, assets, cost and chat beside it" width="100%">
 </p>
 
-<p align="center"><em>The editor agent transcribes speech while the video, timeline, version history, assets, cost, and progress stay visible.</em></p>
+<p align="center"><em>The video plays in the terminal while the version history, assets, cost, and conversation stay visible.</em></p>
 
 ## What's new in 0.2
 

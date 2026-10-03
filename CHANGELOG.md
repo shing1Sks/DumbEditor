@@ -28,6 +28,7 @@ A new screen, a new agent engine, and a picture that works outside Windows.
 - A second Enter no longer saves the model twice; pasting works in the model and music search; a panel replaced by another stops what it started.
 - The preview's FFmpeg no longer lingers after quit on Linux and macOS.
 - Text on rotated clips is placed correctly; overlapping captions no longer stack.
+- Seeking or playing to the very end of a video no longer leaves the old picture on screen with a stuck "Preview unavailable" note.
 
 ### Removed
 - The Ink-based interface.
