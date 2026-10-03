@@ -227,6 +227,8 @@ export function streamRawPreview(options: {
       if (timer) clearTimeout(timer);
       timer = null;
       waiting.length = 0;
+      // Let the pipe drain: FFmpeg may be blocked writing a frame we paused reading.
+      child.stdout.resume();
       terminateProcess(child);
       finishIfDone();
     },

@@ -77,14 +77,28 @@ export function trackProcess<T extends ChildProcess>(child: T): T {
   return child;
 }
 
+/**
+ * Ask a process to stop, and force it if it has not exited a moment later. On Linux and macOS `kill()` is a polite
+ * SIGTERM that FFmpeg does not act on while it is blocked writing to a pipe nobody reads, so it would stay alive and
+ * keep this process (or a test run) from ending.
+ */
+function stop(child: ChildProcess): void {
+  if (!child.killed) child.kill();
+  const force = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }, 1500);
+  force.unref();
+  child.once("close", () => clearTimeout(force));
+}
+
 export function terminateProcess(child: ChildProcess | null | undefined): void {
   if (!child) return;
   runningProcesses.delete(child);
-  if (!child.killed) child.kill();
+  stop(child);
 }
 
-/** Stop work owned by this editor instance when Ink unmounts or the user quits. */
+/** Stop work owned by this editor instance when the user quits. */
 export function terminateRunningProcesses(): void {
-  for (const child of runningProcesses) if (!child.killed) child.kill();
+  for (const child of runningProcesses) stop(child);
   runningProcesses.clear();
 }
