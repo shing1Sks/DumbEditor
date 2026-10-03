@@ -25,7 +25,8 @@ test("renders local overlays, ranged effects, fades, and looped trimmed music", 
 
     // Text and burned-in captions need FFmpeg's `ass` filter (libass). Some builds, such as the macOS CI one, lack it.
     const filters = (await runProcess("ffmpeg", ["-hide_banner", "-filters"])).stdout.toString("utf8");
-    if (/^\s*\S+\s+ass\s/m.test(filters)) {
+    const hasAss = /^\s*\S+\s+ass\s/m.test(filters);
+    if (hasAss) {
       const text = await executeAdvancedEdit(store, {
         action: "text",
         text: "Hello, DumbEditor!",
@@ -101,7 +102,8 @@ test("renders local overlays, ranged effects, fades, and looped trimmed music", 
     const latePeak = await audioPeak(mixed.version.filePath, 1.8, 0.2);
     assert.ok(latePeak > 300 && latePeak < 1_500, `unexpected mixed peak ${latePeak}`);
 
-    assert.equal(store.snapshot.versions.length, 7);
+    // The original plus one version per edit; the text and subtitles edits are missing when they were skipped.
+    assert.equal(store.snapshot.versions.length, hasAss ? 7 : 5);
     for (const version of store.snapshot.versions.slice(1)) {
       assert.equal((await probeMedia(version.filePath)).width, 160);
       assert.equal((await probeMedia(version.filePath)).height, 90);
