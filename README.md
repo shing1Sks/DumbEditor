@@ -88,18 +88,28 @@ winget install Gyan.FFmpeg
 ```
 
 ```bash
-# macOS with Homebrew
-brew install ffmpeg
+# macOS with Homebrew (ffmpeg-full is keg-only: add /opt/homebrew/opt/ffmpeg-full/bin to PATH)
+brew install ffmpeg-full
 
 # Ubuntu / Debian
 sudo apt update && sudo apt install ffmpeg
 ```
 
+Homebrew's plain `ffmpeg` has no libass (since January 2026). DumbEditor still adds text and SRT/VTT captions with it by drawing them as images, but `.ass` subtitle files need an FFmpeg with libass.
+
+### Check your setup
+
+```text
+dumbeditor doctor
+```
+
+Lists what is missing (Node, FFmpeg and its encoders and filters, how text is drawn, `ffplay`, which terminal picture you get and why, the agent sandbox, whether the provider key is set) and prints the install command for your system. It exits with code 1 only when something required is missing.
+
 | Platform | Core editor | Inline preview | Agent script sandbox |
 | --- | --- | --- | --- |
 | Windows 10/11 | Supported and currently developed here | High resolution Sixel in recent Windows Terminal; ANSI fallback | One-time setup with a UAC prompt |
-| macOS | Portable Node and FFmpeg path; covered by build/startup CI | Sixel when advertised by the terminal; ANSI fallback | Available when Sandbox Runtime dependencies pass their check |
-| Linux | Portable Node and FFmpeg path; full test suite runs in CI | Sixel when advertised by the terminal; ANSI fallback | Available when Sandbox Runtime dependencies pass their check |
+| macOS | Portable Node and FFmpeg path; the full test suite runs in CI | Block art by default; Sixel where the terminal has it (set `DUMBEDITOR_PREVIEW=sixel`); a Kitty/iTerm2 picture is planned | Available when Sandbox Runtime dependencies pass their check |
+| Linux | Portable Node and FFmpeg path; the full test suite runs in CI | Block art by default; Sixel where the terminal has it (set `DUMBEDITOR_PREVIEW=sixel`); a Kitty picture is planned | Available when Sandbox Runtime dependencies pass their check |
 
 The prepared editing tools, versions, exports, model calls, and ANSI renderer do not require the optional script sandbox. Set `DUMBEDITOR_PREVIEW=blocks` to force the universal ANSI renderer.
 

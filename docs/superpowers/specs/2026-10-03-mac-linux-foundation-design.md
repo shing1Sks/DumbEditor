@@ -48,42 +48,43 @@ The owner's constraint: **do not regress Windows while this is figured out.** He
 A painter turns RGB frames into something the layer can place, and says how the picture covers the screen. New file `src/shell/preview/painters/types.ts`:
 
 ```ts
-export type PainterId = "sixel" | "blocks";            // step 3 adds "kitty" and "iterm2"
-export interface CellSize { width: number; height: number }
+export type PainterId = PreviewBackend;   // "sixel" | "blocks" today; step 3 adds "kitty" and "iterm2"
 
 export interface Painter {
   readonly id: PainterId;
   /** Frames per second asked of FFmpeg while playing. */
   readonly fps: number;
   /** Pixel size of the picture for a rectangle of columns x rows cells. */
-  renderSize(media: MediaInfo, columns: number, rows: number, cell: CellSize): PreviewSize;
+  renderSize(media: MediaInfo, columns: number, rows: number): PreviewSize;
   /** One RGB frame to the string the layer carries. */
   encode(rgb: Buffer, size: PreviewSize): string;
   /** Terminal cells the encoded picture covers. */
-  cells(size: PreviewSize, cell: CellSize): { columns: number; rows: number };
+  cells(size: PreviewSize): { columns: number; rows: number };
+  /** Rows of the band that suit a video of this aspect ratio in this many columns. */
+  idealRows(columns: number, aspect: number): number;
   /** Escape sequences that draw the picture centred in the rectangle. */
-  place(frame: EncodedFrame, rect: CellRect, cell: CellSize): string;
+  place(frame: EncodedFrame, rect: CellRect): string;
   /** Escape sequences that take the picture off the screen. Sixel and blocks return "" because text overwrites them. */
   remove(): string;
 }
 ```
 
-`EncodedFrame` keeps `{ encoded, size }` and its `backend` field becomes `painter: PainterId`.
+`EncodedFrame` keeps `{ encoded, size, backend }`; the field keeps its name and its type is `PainterId` (the same strings as before, so no caller or test was renamed). Painters call one shared `cellSize()` instead of taking a cell size parameter.
 
 ### 4.2 What moves where
 
 | Today | After |
 | --- | --- |
-| `media.ts`: `rgbToSixel`, `rgbToAnsi`, `previewRenderSize` (sixel branch), `previewSize` (blocks branch), `encodePreviewFrame`, `detectPreviewBackend`, `PreviewBackend` | The functions stay where they are (the `core/media` tests and `streamPreview` still use them). `painters/sixel.ts` and `painters/blocks.ts` are thin objects that call them. `detectPreviewBackend` becomes `choosePainter` in `painters/choose.ts` with the same rule. |
+| `media.ts`: `rgbToSixel`, `rgbToAnsi`, `previewRenderSize` (sixel branch), `previewSize` (blocks branch), `encodePreviewFrame`, `detectPreviewBackend`, `PreviewBackend` | The functions stay where they are (the `core/media` tests and `streamPreview` still use them). `painters/sixel.ts` and `painters/blocks.ts` are thin objects that call them. `detectPreviewBackend` stays in `media.ts` with the same rule; `painters/index.ts` adds `painterFor(id)` and `explainBackend(env)`. |
 | `video-layer.ts`: `buildVideoLayer`, `frameFits`, the `10x20` cell constants | `buildVideoLayer` and `frameFits` call `painter.place` and `painter.cells`. One `cellSize()` (same rule as today: env override, else 10x20) replaces the four copies in `media.ts`, `layout.ts` and `video-layer.ts`. |
 | `playback.ts`: `fps: backend === "sixel" ? 12 : 10`, `previewRenderSize`, `encodePreviewFrame` | Uses `painter.fps`, `painter.renderSize`, `painter.encode`. |
 | `layered-terminal.ts` | Gains one hook `remove(): string`, written when the layer goes away (a panel opens, resize, exit). For Sixel and blocks it returns `""`, so nothing extra is written. |
-| `layout.ts`: `backend === "sixel"` | Asks `painter.cells` for the ideal width instead of comparing a string. |
-| `app.ts`, `screen.ts`, `controls.ts` | Hold a `Painter` instead of a `PreviewBackend`; the status row shows `painter.id`. |
+| `layout.ts`: `backend === "sixel"` | Asks `painter.idealRows` instead of comparing a string. |
+| `app.ts`, `screen.ts`, `controls.ts` | Unchanged: they keep the backend name, which is the painter id. |
 
 ### 4.3 Visible changes: none
 
-Only names change (`backend` fields become `painter`). The controls row prints the backend name today ("sixel" or "blocks") and keeps printing the same strings for the same terminals.
+Nothing is renamed. The controls row prints the backend name ("sixel" or "blocks") and keeps printing the same strings for the same terminals.
 
 ### 4.4 What this step does not do
 
@@ -125,7 +126,7 @@ The probing and the report are separate so tests need no FFmpeg: `parseFilters(t
 
 `prepareText` keeps its code. At the top it asks `textPath()`: libass when the `ass` filter exists (and the hook does not force images), otherwise images.
 - **libass:** unchanged.
-- **images:** `core/text-image.ts` draws the text on a transparent canvas of the video's size with the same inputs (font size, colour, one of the nine positions, outline and shadow like the ASS style), saves a PNG in the workspace, and returns it as the extra input `-loop 1 -i text.png` with the graph `[0:v:0][1:v]overlay=enable='between(t,A,B)'[vout]`. The render plan already carries raw extra input arguments (the image-overlay edit uses `-loop 1 -i image`).
+- **images:** `core/text-image.ts` draws the text on a transparent canvas of the video's size with the same inputs (font size, colour, one of the nine positions, outline and shadow like the ASS style), saves a PNG in the workspace, and returns it as the extra input `-i text.png` with the graph `[1:v]format=rgba[text];[0:v:0][text]overlay=x=X:y=Y:enable='between(t,A,B)'[vout]`. The image is cropped to the text and placed with `x`/`y`, and there is no `-loop 1`: the single frame is decoded once and `overlay` repeats it, which keeps many cue overlays cheap. The render plan already carries raw extra input arguments.
 
 ### 6.3 Captions
 
@@ -146,7 +147,7 @@ The probing and the report are separate so tests need no FFmpeg: `parseFilters(t
 | **Existing emulated-terminal tests** | `shell-app`, `shell-preview`, `shell-screen`, `stream-preview` already drive the whole screen with a real FFmpeg video and check Sixel placement and repaint rules. They stay as they are. |
 | **Windows takes the old path** | `choosePainter` returns Sixel for `WT_SESSION` exactly as today; nothing is added before it. Step 3's new painters are only reachable where today's rule would return blocks. |
 | **Text path** | Windows FFmpeg has libass, so it keeps the libass code path byte for byte; the image path is only reached by the test hook or an FFmpeg without libass. |
-| **New code in new files** | `painters/*`, `platform/hints.ts`, `core/doctor.ts`, `core/ffmpeg-capabilities.ts`, `core/text-image.ts`, `core/captions.ts`. Shared files only gain a slot. |
+| **New code in new files** | `painters/*`, `platform/hints.ts`, `platform/doctor.ts`, `core/ffmpeg-capabilities.ts`, `core/text-image.ts`, `core/captions.ts`. Shared files only gain a slot. |
 | **CI** | Windows, Ubuntu and macOS jobs on every push. The Windows job is the gate for merging. |
 | **Manual** | The PR carries a short Windows Terminal checklist (the one from PR #2 is the base). The author runs it before `latest` moves. |
 
@@ -161,11 +162,12 @@ The probing and the report are separate so tests need no FFmpeg: `parseFilters(t
 
 Branch `platform/foundation` off `master` (this commit). Commits: goldens first, then the refactor, then doctor, then text. One PR into `master`. No version bump and no publish. The first Mac/Linux preview release, when the owner wants one, goes out under the `next` dist-tag.
 
-## 10. Risks and open decisions
+## 10. Decisions taken while building, and what is still open
 
-1. **Optional native dependency on Windows.** npm installs `@napi-rs/canvas` for Windows too (it chooses the platform build itself). Size and install time are not measured yet; the plan measures them first. The fallback, if unacceptable, is to ship the image path as an opt-in that `doctor` tells the user to enable.
-2. **Font choice** is not made. Recommended: one Noto Sans Bold file (OFL). The owner may prefer another.
-3. **The 200-cue cap** is a guess. The plan measures the render time of 50, 100 and 200 chained overlays.
+1. **Optional native dependency on Windows.** Measured: `@napi-rs/canvas` is 0.1 MB of JavaScript plus a platform package; the win32-x64 one is **36.6 MB unpacked**. npm installs it on Windows too (optional dependencies install by default), although Windows has libass and never uses it. Still open for the owner: accept it, or publish a tiny `os`-restricted wrapper package so Windows skips it, or replace it with a pure-JavaScript renderer. Nothing is published by this work.
+2. **Font: decided.** Bold Noto Sans subsets (Latin, Latin Extended, Cyrillic, Greek) as WOFF from `@fontsource/noto-sans`, about 118 KB in total, SIL OFL, in `assets/fonts/`. The library accepts WOFF. Scripts the subsets do not cover (CJK, emoji) fall back to system fonts, best effort.
+3. **Caption cap: kept at 200.** Each cue is a small cropped image decoded once, so the cost is in the filter graph, not the images. The cap is still a guess and is the first thing to revisit if someone captions a long video on a machine without libass.
 4. **`FFMPEG_PATH`** (point to a specific FFmpeg, useful for the keg-only `ffmpeg-full`) is left out to keep this step small. It touches every `spawn("ffmpeg")` call and belongs with step 3 or its own change.
 5. **Warp and Konsole** image support is unverified; it only matters in step 3.
 6. **macOS CI** installs the slim Homebrew FFmpeg on purpose. It is the hardest case for the text path and must pass.
+7. **Found while building:** newer FFmpeg builds print two flag columns in `-filters` where older ones print three; the parser accepts both and a test reads the real FFmpeg on whatever machine runs the suite.
