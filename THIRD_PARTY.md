@@ -32,3 +32,14 @@ SOFTWARE.
 
 The `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` packages are installed as
 dependencies under the same license.
+
+## Noto Sans (bundled font subsets)
+
+`assets/fonts/noto-sans-*-700-normal.woff` are the bold Latin, Latin Extended, Cyrillic and Greek subsets of Noto Sans,
+taken from the `@fontsource/noto-sans` package. They are used under the SIL Open Font License 1.1 (full text in
+`assets/fonts/OFL.txt`) to draw text overlays and captions as images when FFmpeg has no libass.
+
+## @napi-rs/canvas (optional)
+
+An optional dependency, loaded only to draw text as images when FFmpeg has no libass. MIT License,
+https://github.com/Brooooooklyn/canvas.
