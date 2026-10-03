@@ -6,7 +6,7 @@ import { config, parse } from "dotenv";
 import { readSettings, writeSettings } from "./settings.js";
 import { setupLocalSandbox } from "./sandbox.js";
 
-const configDirectory = process.env.DUMBEDITOR_CONFIG_DIR?.trim() || join(homedir(), ".dumbeditor");
+export const configDirectory = process.env.DUMBEDITOR_CONFIG_DIR?.trim() || join(homedir(), ".dumbeditor");
 export const userConfigPath = join(configDirectory, ".env");
 
 /** Settings that choose which program runs. Only the real environment and the user's own config file may set them: a .env in whatever folder you happen to be in must not. */

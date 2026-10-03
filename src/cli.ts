@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadEnvironment, runSetup } from "./core/config.js";
 import { ProjectStore } from "./core/project.js";
 import { markWelcomeShown } from "./core/settings.js";
+import { defaultUpdateDeps, refreshUpdateState, runUpdate, updateChecksEnabled, updateNotice } from "./platform/update.js";
 import { ShellApp } from "./shell/app.js";
 import { setMeasuredCell } from "./shell/preview/painters/cell-size.js";
 import { detectPainter } from "./shell/preview/painters/detect.js";
@@ -23,6 +24,10 @@ if (args[0] === "setup") {
     process.exitCode = 1;
   });
   process.exit(process.exitCode ?? 0);
+}
+
+if (args[0] === "update") {
+  process.exit(await runUpdate(args.slice(1), defaultUpdateDeps(version, packageRoot)));
 }
 
 if (args[0] === "doctor") {
@@ -55,6 +60,8 @@ if (args[0] === "clean") {
   process.exit(process.exitCode ?? 0);
 }
 
+const updateDeps = defaultUpdateDeps(version, packageRoot);
+const checksEnabled = updateChecksEnabled(process.env, packageRoot);
 let launchArgs = args;
 if (args[0] === "--fresh") {
   const source = args[1];
@@ -78,6 +85,9 @@ if (unknownOption) {
 if (launchArgs.length === 0) {
   const firstLaunch = await markWelcomeShown().catch(() => false);
   console.log(firstLaunch ? firstLaunchMessage(version) : overviewMessage(version));
+  const notice = checksEnabled ? updateNotice(version, await refreshUpdateState(updateDeps).catch(() => null)) : null;
+  if (notice) console.log(`
+${notice}`);
   process.exit(0);
 }
 
@@ -87,6 +97,8 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
   process.exit(1);
 }
 process.title = "DumbEditor";
+// Look for a newer version in the background (at most once a day); the answer is shown after the editor closes.
+const updateCheck = checksEnabled ? refreshUpdateState(updateDeps).catch(() => null) : Promise.resolve(null);
 // Ask the terminal what picture it can show before the screen starts (never on Windows, in tmux, or in Terminal.app).
 const detected = await detectPainter({ env: process.env, platform: process.platform, isTTY: true, probe: () => probeStdio(process.env) });
 if (detected.probed?.cell) setMeasuredCell(detected.probed.cell);
@@ -115,6 +127,9 @@ const exitCode = await new Promise<number>((done) => {
   });
 });
 await terminal.drainInput(200, 30);
+const notice = updateNotice(version, await Promise.race([updateCheck, new Promise<null>((done) => setTimeout(() => done(null), 300).unref())]));
+if (notice) console.log(`
+${notice}`);
 process.exit(exitCode);
 
 function overviewMessage(installedVersion: string): string {
@@ -130,6 +145,7 @@ versioned, reversible, and rendered locally with FFmpeg.
 Start:
   dumbeditor setup
   dumbeditor doctor
+  dumbeditor update
   dumbeditor <video>
 
 Learn more:
@@ -161,6 +177,7 @@ Usage:
   dumbeditor            Show the project overview and next steps
   dumbeditor setup      Configure provider keys and the local agent sandbox
   dumbeditor doctor     Check FFmpeg, text support and the terminal picture
+  dumbeditor update     Install the newest version (add --tag next for previews)
   dumbeditor clean <video> Permanently remove saved project state; preserve the source
   dumbeditor --fresh <video> Archive the current project and start a clean session
   dumbeditor --help     Show this complete reference
