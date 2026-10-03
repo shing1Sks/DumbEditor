@@ -54,6 +54,14 @@ test("missing encoders and filters are named", () => {
   assert.match(byLabel(buildReport({ ...base, ffmpeg: noOverlay }), /filters/i)?.detail ?? "", /overlay/);
 });
 
+test("the FFmpeg that is used is shown when it is not the one on PATH, and a bad folder is a failure", () => {
+  const shown = buildReport({ ...base, ffmpegPath: "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg" });
+  assert.match(byLabel(shown, /^ffmpeg$/i)?.detail ?? "", /ffmpeg-full/);
+  const bad = buildReport({ ...base, ffmpegDirectoryProblem: "DUMBEDITOR_FFMPEG_DIR is /x, but there is no /x/ffmpeg" });
+  assert.equal(bad.ok, false);
+  assert.equal(byLabel(bad, /folder/i)?.status, "fail");
+});
+
 test("old Node fails; a missing ffplay, key, sandbox and a block-art terminal only warn", () => {
   assert.equal(buildReport({ ...base, node: "v20.11.0" }).ok, false);
   const report = buildReport({ ...base, ffplay: false, providerKey: false, sandbox: { available: false, detail: "bubblewrap is missing" } });

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { resolveBinary } from "./binaries.js";
 
 const runningProcesses = new Set<ChildProcess>();
 
@@ -13,7 +14,7 @@ export async function runProcess(
   options: { cwd?: string; timeoutMs?: number; maxOutputBytes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv } = {},
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(resolveBinary(command), args, {
       cwd: options.cwd,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -59,7 +60,7 @@ export async function runProcess(
 }
 
 export function spawnQuiet(command: string, args: string[], cwd?: string): ChildProcessWithoutNullStreams {
-  const child = spawn(command, args, {
+  const child = spawn(resolveBinary(command), args, {
     cwd,
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],

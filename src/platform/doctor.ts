@@ -1,3 +1,4 @@
+import { ffmpegDirectoryProblem, resolveBinary } from "../core/binaries.js";
 import { loadCapabilities, type FfmpegCapabilities } from "../core/ffmpeg-capabilities.js";
 import { detectPreviewBackend } from "../core/media.js";
 import { runProcess } from "../core/process.js";
@@ -18,6 +19,10 @@ export interface DoctorInputs {
   node: string;
   platform: NodeJS.Platform;
   ffmpeg: FfmpegCapabilities | null;
+  /** The FFmpeg that runs when it is not the one on PATH (DUMBEDITOR_FFMPEG_DIR, or Homebrew's ffmpeg-full), else null. */
+  ffmpegPath?: string | null;
+  /** Set when DUMBEDITOR_FFMPEG_DIR names a folder that has no ffmpeg. */
+  ffmpegDirectoryProblem?: string | null;
   ffprobe: boolean;
   ffplay: boolean;
   imageLibrary: boolean;
@@ -45,8 +50,9 @@ export function buildReport(inputs: DoctorInputs): DoctorReport {
     : { label: "Node", status: "fail", detail: `${inputs.node} is too old`, fix: [`Install Node ${MINIMUM_NODE.join(".")} or newer: https://nodejs.org`] });
 
   const caps = inputs.ffmpeg;
+  if (inputs.ffmpegDirectoryProblem) add({ label: "FFmpeg folder", status: "fail", detail: inputs.ffmpegDirectoryProblem, fix: ["Point DUMBEDITOR_FFMPEG_DIR at the folder that holds ffmpeg, ffprobe and ffplay, or unset it."] });
   add(caps
-    ? { label: "FFmpeg", status: "ok", detail: caps.version ? `version ${caps.version}` : "found" }
+    ? { label: "FFmpeg", status: "ok", detail: `${caps.version ? `version ${caps.version}` : "found"}${inputs.ffmpegPath ? ` (${inputs.ffmpegPath})` : ""}` }
     : { label: "FFmpeg", status: "fail", detail: "ffmpeg did not run", fix: hints });
   add(inputs.ffprobe
     ? { label: "ffprobe", status: "ok", detail: "found" }
@@ -111,8 +117,9 @@ export async function gatherInputs(environment: NodeJS.ProcessEnv = process.env)
   const [ffmpeg, ffprobe, ffplay, canvas, sandbox] = await Promise.all([
     loadCapabilities(), runs("ffprobe"), runs("ffplay"), loadCanvas(), localSandboxStatus().catch(() => ({ available: false, detail: "could not be checked" })),
   ]);
+  const ffmpegFile = resolveBinary("ffmpeg");
   return {
-    node: process.version, platform: process.platform, ffmpeg, ffprobe, ffplay, imageLibrary: canvas !== null,
+    node: process.version, platform: process.platform, ffmpeg, ffmpegPath: ffmpegFile === "ffmpeg" ? null : ffmpegFile, ffmpegDirectoryProblem: ffmpegDirectoryProblem(), ffprobe, ffplay, imageLibrary: canvas !== null,
     painter: { id: detectPreviewBackend(environment), reason: explainBackend(environment) },
     sandbox, providerKey: Boolean(environment.OPENROUTER_API_KEY?.trim()),
   };
