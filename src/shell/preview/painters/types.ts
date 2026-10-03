@@ -19,6 +19,11 @@ export interface Painter {
   readonly id: PainterId;
   /** Frames per second asked of FFmpeg while playing. */
   readonly fps: number;
+  /**
+   * Whether the picture stays on screen when text is drawn over it. A Sixel image is erased by text, so it is drawn
+   * again when the text around it changes; a Kitty image is not, so it is only drawn again when it changes.
+   */
+  readonly persistent: boolean;
   /** Pixel size of the picture for a rectangle of columns x rows cells. */
   renderSize(media: MediaInfo, columns: number, rows: number): PreviewSize;
   /** One RGB24 frame to the string the layer carries. */

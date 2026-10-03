@@ -63,6 +63,6 @@ export class PreviewHost {
     if (!this.cached || this.cached.revision !== this.revision || this.cached.rect !== rectKey) {
       this.cached = { revision: this.revision, rect: rectKey, output: buildVideoLayer(this.frame, rect) };
     }
-    return { rect, revision: this.revision, output: this.cached.output };
+    return { rect, revision: this.revision, output: this.cached.output, persistent: painterFor(this.frame.backend).persistent };
   }
 }

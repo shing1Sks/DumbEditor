@@ -5,6 +5,7 @@ import type { Painter } from "./types.js";
 export const blocksPainter: Painter = {
   id: "blocks",
   fps: 10,
+  persistent: false,
   renderSize: (media, columns, rows) => previewRenderSize(media, columns, rows, "blocks"),
   encode: (rgb, size) => rgbToAnsi(rgb, size.width, size.height),
   cells: (size) => ({ columns: size.width, rows: Math.ceil(size.height / 2) }),

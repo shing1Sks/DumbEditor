@@ -50,7 +50,7 @@ export interface PreviewSize {
   height: number;
 }
 
-export type PreviewBackend = "sixel" | "blocks";
+export type PreviewBackend = "sixel" | "blocks" | "kitty";
 
 export function detectPreviewBackend(environment: NodeJS.ProcessEnv = process.env): PreviewBackend {
   const override = environment.DUMBEDITOR_PREVIEW?.trim().toLowerCase();

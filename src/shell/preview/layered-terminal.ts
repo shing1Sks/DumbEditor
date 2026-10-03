@@ -11,6 +11,8 @@ export interface VideoLayer {
   revision: number;
   /** The escape sequences that paint the picture (see buildVideoLayer). */
   output: string;
+  /** The picture stays on screen when text is drawn over it, so a change in the text around it needs no resend. */
+  persistent?: boolean;
 }
 
 export interface LayerHooks {
@@ -102,7 +104,8 @@ export class LayeredTerminal implements Terminal {
       if (out) this.inner.write(out);
       return;
     }
-    const key = `${layer.rect.x},${layer.rect.y},${layer.rect.w},${layer.rect.h}|${layer.revision}|${this.hooks.bandText(layer.rect)}`;
+    const where = `${layer.rect.x},${layer.rect.y},${layer.rect.w},${layer.rect.h}|${layer.revision}`;
+    const key = layer.persistent ? where : `${where}|${this.hooks.bandText(layer.rect)}`;
     if (!this.forced && key === this.lastKey) {
       if (data) this.inner.write(data);
       return;
