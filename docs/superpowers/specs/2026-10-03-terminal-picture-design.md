@@ -119,3 +119,16 @@ Model picker saves once on a double Enter; pasted text reaches panel search fiel
 - **`.env` safety.** `DUMBEDITOR_FFMPEG_DIR` is read from the real environment and the user's config file only, never from a `.env` in the current folder, because it chooses which program runs. The folder is made absolute.
 - **Probe.** It keeps listening for 30 ms after the answer and for 150 ms after a timeout and uses what arrived; any failure to switch the terminal's input mode is an unanswered probe, not a crash. Zellij is not asked.
 - **Tests.** One that passed without the code it covers (late replies) and one that only tested a fallback (the FFmpeg folder) now pin their behaviour; every spawn site is proven to use the chosen folder with a stand-in program.
+
+## 9. Checked in a real terminal (2026-10-03)
+
+The Kitty painter, the probe and the layer logic were run in **kitty 0.49.2 on Linux** (inside WSL, shown through WSLg), with Node 22 and a static FFmpeg 7.0, using the packed tarball. The editor was started with no override, so the picture was chosen by asking the terminal.
+
+- **Detection:** the probe answered, the controls row said KITTY, and the picture appeared in the video band with the sidebar and play bar around it.
+- **Playback:** with Ctrl+P the burned-in timecode of the test clip advanced with the play bar (1.4 s to 3.1 s over about two seconds), and pausing held the frame.
+- **Panels:** opening Help replaced the video with the panel and left no stale image behind it; closing it brought the picture back at the paused frame.
+- **Resize:** shrinking from 110x36 to 90x30 and 70x24, and growing back, each re-rendered the picture at the new size (the layer was sent again, then the new frame). Minimizing and restoring the window kept the picture, and the focus-in repaint resent it.
+- **Quit:** Ctrl+C left a clean shell (exit code 0) and no picture on the screen.
+- **Not reproduced:** twice, after a resize that my capture tool had caught with the window minimized, the band stayed empty until the next seek. Four later runs of the same sequences with tracing on all behaved. It is recorded here because it was seen; it may be an effect of resizing a hidden window.
+
+**What could not be checked this way.** WezTerm for Windows (installed for the test) does not show Kitty or Sixel pictures from a program running in it, because Windows' ConPTY layer drops those sequences; its own `imgcat` (iTerm2 protocol) does show. So Windows-native WezTerm cannot test this feature, and a user on Windows keeps using Windows Terminal with Sixel. Still unchecked: Ghostty, WezTerm on Linux or macOS, iTerm2, Konsole, foot, and the real frame rate (the run above played smoothly but was not measured).
