@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolve } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ProviderModel } from "../src/core/models.js";
 import { DEFAULT_SETTINGS } from "../src/core/settings.js";
@@ -190,7 +191,10 @@ test("export: edit the destination, change format and compression, and start the
   assert.equal(panel.focus, "format");
   panel.handleInput(KEY.enter);
   assert.equal(log.performed.length, 1);
-  assert.deepEqual({ ...(log.performed[0] as object), destination: String((log.performed[0] as { destination: string }).destination).replace(/\\/g, "/") }, { destination: "C:/videos/demo-export.mkv", format: "mkv", preset: "high" });
+  assert.deepEqual({ ...(log.performed[0] as object), destination: String((log.performed[0] as { destination: string }).destination).replace(/\\/g, "/") }, {
+    // The panel resolves the typed path; on Linux and macOS "C:/videos/..." is a relative path under the working directory.
+    destination: resolve("C:/videos/demo-export.mkv").replace(/\\/g, "/"), format: "mkv", preset: "high",
+  });
   panel.handleInput(KEY.esc);
   assert.equal(log.closed, 1);
 });
