@@ -23,22 +23,28 @@ test("renders local overlays, ranged effects, fades, and looped trimmed music", 
     const store = await ProjectStore.open(source);
     await store.setVersionLimit(10);
 
-    const text = await executeAdvancedEdit(store, {
-      action: "text",
-      text: "Hello, DumbEditor!",
-      range: { start: 0.3, end: 1.3 },
-      position: "center",
-      fontSize: 24,
-      color: "#ffffff",
-    }, "add title");
-    assert.equal(text.version.action, "Added text at 00:00.3–00:01.3");
-    const textInside = await brightPixelCount(text.version.filePath, 0.8);
-    const textOutside = await brightPixelCount(text.version.filePath, 0.1);
-    assert.ok(textInside > textOutside + 20, `expected more bright text pixels (${textInside} vs ${textOutside})`);
+    // Text and burned-in captions need FFmpeg's `ass` filter (libass). Some builds, such as the macOS CI one, lack it.
+    const filters = (await runProcess("ffmpeg", ["-hide_banner", "-filters"])).stdout.toString("utf8");
+    if (/^\s*\S+\s+ass\s/m.test(filters)) {
+      const text = await executeAdvancedEdit(store, {
+        action: "text",
+        text: "Hello, DumbEditor!",
+        range: { start: 0.3, end: 1.3 },
+        position: "center",
+        fontSize: 24,
+        color: "#ffffff",
+      }, "add title");
+      assert.equal(text.version.action, "Added text at 00:00.3–00:01.3");
+      const textInside = await brightPixelCount(text.version.filePath, 0.8);
+      const textOutside = await brightPixelCount(text.version.filePath, 0.1);
+      assert.ok(textInside > textOutside + 20, `expected more bright text pixels (${textInside} vs ${textOutside})`);
 
-    await store.revert("v0000");
-    const captioned = await executeAdvancedEdit(store, { action: "subtitles", filePath: subtitles }, "burn captions");
-    assert.ok(await changedPixelCount(captioned.version.filePath, 0.1, 0.8) > 20);
+      await store.revert("v0000");
+      const captioned = await executeAdvancedEdit(store, { action: "subtitles", filePath: subtitles }, "burn captions");
+      assert.ok(await changedPixelCount(captioned.version.filePath, 0.1, 0.8) > 20);
+    } else {
+      console.warn("advanced-editor: this FFmpeg has no `ass` filter, so the text and subtitles checks are skipped");
+    }
 
     await store.revert("v0000");
     const overlaid = await executeAdvancedEdit(store, {
