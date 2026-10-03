@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { formatImagePriceFields, formatPerMillionPrice, formatVideoPriceFields, listProviderModels } from "../src/core/models.js";
-import { capabilityDefinition, filteredPickerModels, initialModelPicker, MODEL_CAPABILITIES, modelPricePresentation } from "../src/ui/ModelPanel.js";
+import { capabilityDefinition, filteredPickerModels, initialModelPicker, MODEL_CAPABILITIES, modelPricePresentation } from "../src/shell/overlays/model-picker-state.js";
 
 const models = [
   { id: "gpt-6-luna", name: "GPT-6 Luna" },

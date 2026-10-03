@@ -31,3 +31,10 @@ test("reports command usage for incomplete edits", () => {
   assert.throws(() => parseEditCommand("/clip-remove 2", context), /Usage: \/clip-remove/);
   assert.throws(() => parseEditCommand("/speed 0 5 99x", context), /between 0.25x and 16x/);
 });
+
+test("offers the agent-engine commands and no longer offers the removed Claude harness command", () => {
+  const names = commandSuggestions("/").map((item) => item.name);
+  assert.ok(names.includes("/budget"));
+  assert.ok(names.includes("/compact"));
+  assert.ok(!names.includes("/harness-model"));
+});

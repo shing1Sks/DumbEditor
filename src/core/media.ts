@@ -130,6 +130,11 @@ export function streamPreview(options: {
   });
 }
 
+/**
+ * Decode a video from `start` and hand over RGB frames in real time. FFmpeg runs without -re: with -re it paces its
+ * reading in real time from the keyframe before `start`, so seeking into a long GOP made the first picture arrive
+ * seconds late. Frames are released on the clock here instead, and FFmpeg is paused while enough are waiting.
+ */
 export function streamRawPreview(options: {
   filePath: string;
   start: number;
@@ -144,27 +149,63 @@ export function streamRawPreview(options: {
   const child = trackProcess(spawn(
     "ffmpeg",
     [
-      "-v", "error", "-ss", Math.max(0, options.start).toFixed(3), "-re", "-i", options.filePath,
+      "-v", "error", "-ss", Math.max(0, options.start).toFixed(3), "-i", options.filePath,
       "-an", "-vf", `fps=${fps},scale=${options.size.width}:${options.size.height}:flags=lanczos`,
       "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
     ],
     { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
   ));
+  const waiting: Buffer[] = [];
   let pending = Buffer.alloc(0);
   let stderr = "";
-  let index = 0;
+  let released = 0;
+  let startedAt = 0;
+  let timer: NodeJS.Timeout | null = null;
+  let exited = false;
+  let finished = false;
+  let stopped = false;
   let errorReported = false;
+
+  const finishIfDone = () => {
+    if (!exited || waiting.length > 0 || timer || finished) return;
+    finished = true;
+    options.onEnd();
+  };
+  const release = () => {
+    timer = null;
+    let frame = waiting.shift();
+    if (!frame) { finishIfDone(); return; }
+    let index = released;
+    released += 1;
+    // When we are running late, skip to the newest frame that is already due instead of falling further behind.
+    while (waiting.length > 0 && startedAt + (released * 1000) / fps <= Date.now()) {
+      frame = waiting.shift() as Buffer;
+      index = released;
+      released += 1;
+    }
+    options.onFrame(frame, options.start + index / fps);
+    if (waiting.length <= 2) child.stdout.resume();
+    schedule();
+  };
+  const schedule = () => {
+    if (timer) return;
+    if (waiting.length === 0) { finishIfDone(); return; }
+    if (startedAt === 0) startedAt = Date.now();
+    timer = setTimeout(release, Math.max(0, startedAt + (released * 1000) / fps - Date.now()));
+  };
+
   child.stdout.on("data", (chunk: Buffer) => {
+    if (stopped) return;
     pending = Buffer.concat([pending, chunk]);
     while (pending.length >= frameBytes) {
-      const frame = pending.subarray(0, frameBytes);
+      waiting.push(pending.subarray(0, frameBytes));
       pending = pending.subarray(frameBytes);
-      options.onFrame(frame, options.start + index / fps);
-      index += 1;
     }
+    if (waiting.length > 4) child.stdout.pause();
+    schedule();
   });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderr = (stderr + chunk.toString("utf8")).slice(-4000);
+  child.stderr?.on("data", (data: Buffer) => {
+    stderr = (stderr + data.toString("utf8")).slice(-4000);
   });
   child.on("error", (error) => {
     errorReported = true;
@@ -174,9 +215,24 @@ export function streamRawPreview(options: {
     if (code !== 0 && !child.killed && !errorReported) {
       options.onError?.(new Error(stderr.trim() || `FFmpeg preview exited with code ${code}`));
     }
-    options.onEnd();
+    exited = true;
+    child.stdout.resume();
+    schedule();
+    finishIfDone();
   });
-  return { process: child, stop: () => terminateProcess(child) };
+  return {
+    process: child,
+    stop: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      waiting.length = 0;
+      // Let the pipe drain: FFmpeg may be blocked writing a frame we paused reading.
+      child.stdout.resume();
+      terminateProcess(child);
+      finishIfDone();
+    },
+  };
 }
 
 export function encodePreviewFrame(
@@ -189,13 +245,21 @@ export function encodePreviewFrame(
     : rgbToAnsi(buffer, size.width, size.height);
 }
 
+/**
+ * ffplay arguments for playing only the sound. Without -vn ffplay also opens the video and seeks to the keyframe
+ * before the requested time, which can be several seconds early, so the sound would start ahead of the picture.
+ */
+export function audioPlayerArguments(filePath: string, start: number, volume: number): string[] {
+  return ["-nodisp", "-vn", "-autoexit", "-loglevel", "error", "-ss", Math.max(0, start).toFixed(3), "-volume", String(volume), filePath];
+}
+
 export function playAudio(filePath: string, start: number, volume: number, onError?: (error: Error) => void): ChildProcess | null {
   try {
     let stderr = "";
     let errorReported = false;
     const child = trackProcess(spawn(
       "ffplay",
-      ["-nodisp", "-autoexit", "-loglevel", "error", "-ss", Math.max(0, start).toFixed(3), "-volume", String(volume), filePath],
+      audioPlayerArguments(filePath, start, volume),
       { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
     ));
     child.stderr?.on("data", (chunk: Buffer) => {
