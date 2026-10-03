@@ -3,7 +3,7 @@ import type { ProviderModel } from "../../core/models.js";
 import type { DumbEditorSettings, ModelProvider, ModelSlot } from "../../core/settings.js";
 import type { Loader } from "../state/shell-state.js";
 import { bold, accent, dim, inverse, yellow } from "../views/style.js";
-import { box, centered, isPrintable, listWindow, Panel, wrapIndex, type PanelContext } from "./frame.js";
+import { box, centered, isTextInput, listWindow, Panel, wrapIndex, type PanelContext } from "./frame.js";
 import {
   capabilityDefinition, configuredCapability, configuredModel, filteredPickerModels, initialModelPicker, MODEL_CAPABILITIES,
   modelPricePresentation, providerName, type ModelCapability, type ModelPickerState, type ModelPickerStep,
@@ -23,6 +23,8 @@ export interface ModelPanelServices {
 export class ModelPanel extends Panel {
   picker: ModelPickerState = initialModelPicker();
   private request = 0;
+  /** True while a choice is being saved, so a second Enter does not save it twice. */
+  private saving = false;
   private readonly search = new Input({ prompt: "Search > " });
 
   constructor(context: PanelContext, private readonly services: ModelPanelServices) { super(context); }
@@ -50,7 +52,7 @@ export class ModelPanel extends Panel {
     } else if (matchesKey(data, "enter") || matchesKey(data, "right")) {
       void this.choose();
       return;
-    } else if (picker.step === "models" && !picker.error && (isPrintable(data) || matchesKey(data, "backspace") || matchesKey(data, "ctrl+u") || matchesKey(data, "ctrl+a") || matchesKey(data, "ctrl+e") || matchesKey(data, "delete"))) {
+    } else if (picker.step === "models" && !picker.error && (isTextInput(data) || matchesKey(data, "backspace") || matchesKey(data, "ctrl+u") || matchesKey(data, "ctrl+a") || matchesKey(data, "ctrl+e") || matchesKey(data, "delete"))) {
       const before = this.search.getValue();
       this.search.handleInput(data);
       if (this.search.getValue() !== before) this.picker = { ...picker, query: this.search.getValue(), selectedIndex: 0 };
@@ -74,7 +76,8 @@ export class ModelPanel extends Panel {
     if (!picker.provider) return;
     if (picker.error) { await this.load(picker.provider, picker.slot); return; }
     const selected = filteredPickerModels(picker)[picker.selectedIndex];
-    if (!selected) return;
+    if (!selected || this.saving) return;
+    this.saving = true;
     this.services.setLoader({ source: "Editor", stage: "Saving model default" });
     try {
       await this.services.save({ capability: picker.capability, provider: picker.provider, slot: picker.slot, model: selected });
@@ -82,6 +85,7 @@ export class ModelPanel extends Panel {
     } catch (error) {
       this.picker = { ...this.picker, error: error instanceof Error ? error.message : String(error) };
     } finally {
+      this.saving = false;
       this.services.setLoader(null);
       this.context.requestRender();
     }

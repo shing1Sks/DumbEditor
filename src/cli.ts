@@ -6,6 +6,10 @@ import { loadEnvironment, runSetup } from "./core/config.js";
 import { ProjectStore } from "./core/project.js";
 import { markWelcomeShown } from "./core/settings.js";
 import { ShellApp } from "./shell/app.js";
+import { setMeasuredCell } from "./shell/preview/painters/cell-size.js";
+import { detectPainter } from "./shell/preview/painters/detect.js";
+import { kittyKeepsImages, setKittyPersistent } from "./shell/preview/painters/kitty.js";
+import { probeStdio } from "./shell/preview/painters/probe.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnvironment(packageRoot);
@@ -83,9 +87,13 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
   process.exit(1);
 }
 process.title = "DumbEditor";
+// Ask the terminal what picture it can show before the screen starts (never on Windows, in tmux, or in Terminal.app).
+const detected = await detectPainter({ env: process.env, platform: process.platform, isTTY: true, probe: () => probeStdio(process.env) });
+if (detected.probed?.cell) setMeasuredCell(detected.probed.cell);
+setKittyPersistent(kittyKeepsImages(detected.probed?.name, process.env));
 const terminal = new ProcessTerminal();
 const exitCode = await new Promise<number>((done) => {
-  const app = new ShellApp({ terminal, initialPath, onExit: done });
+  const app = new ShellApp({ terminal, initialPath, backend: detected.id, onExit: done });
   process.once("exit", () => app.dispose());
   // Closing the terminal tab sends SIGHUP and `kill` sends SIGTERM; neither runs "exit" handlers,
   // so stop child processes and give the terminal back before leaving.

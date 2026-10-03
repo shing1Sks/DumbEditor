@@ -136,7 +136,7 @@ test("a paid action asks first; Enter picks the safe default (Deny) and the run 
   } finally { await t.cleanup(); }
 });
 
-test("Escape stops a run that is waiting and says so", { timeout: 90_000 }, async () => {
+test("Ctrl+C stops a run that is waiting and says so", { timeout: 90_000 }, async () => {
   const t = await boot();
   try {
     t.faux.faux.setResponses([toolUse(call("present_choices", { question: "Which?", options: ["A", "B"], allow_custom: false }, "c1"))]);
@@ -207,5 +207,32 @@ test("while the editor renders a new version the preview stops playing", { timeo
     t.app.state.setLoader({ source: "glm", stage: "Rendering with FFmpeg" });
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(t.app.state.playing, false, "paused for the render, not because the clip ended");
+  } finally { await t.cleanup(); }
+});
+
+test("a panel that is replaced by another stops what it started", { timeout: 90_000 }, async () => {
+  const t = await boot({ engine: false });
+  try {
+    const state = t.app.state;
+    state.openOverlay("assets");
+    await t.fake.settle();
+    const inner = t.app as unknown as { assetPlaying: boolean };
+    inner.assetPlaying = true;
+    state.openOverlay("help");
+    await t.fake.settle();
+    assert.equal(inner.assetPlaying, false, "the asset browser's playback was stopped when the help panel replaced it");
+  } finally { await t.cleanup(); }
+});
+
+test("the notice that the agent could not start survives loading the project's chat", { timeout: 90_000 }, async () => {
+  const t = await boot({ engine: false });
+  try {
+    const notices = (t.app as unknown as { engineNotices: string[] }).engineNotices;
+    notices.push("The agent could not start for this project: boom. Slash commands still work.");
+    await t.app.openVideo(t.project.store.snapshot.sourcePath);
+    const lines = texts(t.app);
+    assert.ok(lines.some((line) => line.includes("The agent could not start for this project: boom")), "shown after the chat is loaded");
+    assert.ok(!lines.some((line) => line.includes("Add an OpenRouter API key")), "and not hidden behind the missing-key message");
+    assert.equal(notices.length, 0, "shown once");
   } finally { await t.cleanup(); }
 });

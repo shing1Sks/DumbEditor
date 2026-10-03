@@ -108,8 +108,8 @@ Lists what is missing (Node, FFmpeg and its encoders and filters, how text is dr
 | Platform | Core editor | Inline preview | Agent script sandbox |
 | --- | --- | --- | --- |
 | Windows 10/11 | Supported and currently developed here | High resolution Sixel in recent Windows Terminal; ANSI fallback | One-time setup with a UAC prompt |
-| macOS | Portable Node and FFmpeg path; the full test suite runs in CI | Block art by default; Sixel where the terminal has it (set `DUMBEDITOR_PREVIEW=sixel`); a Kitty/iTerm2 picture is planned | Available when Sandbox Runtime dependencies pass their check |
-| Linux | Portable Node and FFmpeg path; the full test suite runs in CI | Block art by default; Sixel where the terminal has it (set `DUMBEDITOR_PREVIEW=sixel`); a Kitty picture is planned | Available when Sandbox Runtime dependencies pass their check |
+| macOS | Portable Node and FFmpeg path; the full test suite runs in CI | Asks the terminal: a sharp Kitty-graphics picture in Ghostty, kitty, WezTerm and iTerm2, Sixel where that is all there is, block art elsewhere (256 colours in Terminal.app) | Available when Sandbox Runtime dependencies pass their check |
+| Linux | Portable Node and FFmpeg path; the full test suite runs in CI | Asks the terminal: Kitty graphics in kitty, Ghostty, WezTerm and Konsole, Sixel in foot and xterm, block art elsewhere | Available when Sandbox Runtime dependencies pass their check |
 
 The prepared editing tools, versions, exports, model calls, and ANSI renderer do not require the optional script sandbox. Set `DUMBEDITOR_PREVIEW=blocks` to force the universal ANSI renderer.
 
@@ -121,7 +121,7 @@ The first no-argument launch explains DUMB and shows the two startup commands. L
 
 ## What ships today
 
-- High resolution Sixel video preview in supported terminals, with an ANSI fallback
+- High resolution video preview: Kitty graphics or Sixel where the terminal has them, block art everywhere else
 - Stable player, timeline, scrollable conversation, multiline composer, version sidebar, and asset browser
 - Plain-language multi-step editing plus discoverable deterministic slash commands
 - Remove, keep, speed, mute, crop, text, image overlay, fade, effect, subtitle, music, and export tools
@@ -273,7 +273,7 @@ The chat footer shows the configured editor model by name alongside its running 
 
 ## Preview backend
 
-DumbEditor chooses Sixel in Windows Terminal and terminals that advertise Sixel support. Frames are scaled with Lanczos and painted only inside the reserved player rectangle. The screen is a fixed-size full-screen view that redraws only the rows that changed, and the picture is a separate layer sent with the text in one synchronized update, only when something could have erased it. A long or multi-line message, a window resize, a streaming answer, or an open panel never moves the panels or the video. Panels such as help, music, export, and the model picker replace the video area while they are open and bring the picture back when they close.
+DumbEditor shows the picture the best way the terminal allows. On Windows it uses Sixel in Windows Terminal and block art elsewhere, as it always has. On macOS and Linux it asks the terminal once, before the screen starts, which picture it can show: the Kitty graphics protocol (Ghostty, kitty, WezTerm, Konsole, iTerm2) first, then Sixel (foot, xterm, VS Code with images on, iTerm2, WezTerm), then block art. It does not ask in tmux, screen or Terminal.app, which would print stray characters or hide the answer, and it falls back to what the environment says if the terminal does not answer in time. `dumbeditor doctor` shows which one is in use and why. Frames are scaled with Lanczos and painted only inside the reserved player rectangle. The screen is a fixed-size full-screen view that redraws only the rows that changed, and the picture is a separate layer sent with the text in one synchronized update, only when something could have erased it. A long or multi-line message, a window resize, a streaming answer, or an open panel never moves the panels or the video. Panels such as help, music, export, and the model picker replace the video area while they are open and bring the picture back when they close.
 
 ```powershell
 $env:DUMBEDITOR_PREVIEW = "blocks"
@@ -284,7 +284,15 @@ dumbeditor video.mp4
 DUMBEDITOR_PREVIEW=blocks dumbeditor video.mp4
 ```
 
-`DUMBEDITOR_CELL_WIDTH` and `DUMBEDITOR_CELL_HEIGHT` override the terminal cell size used for Sixel fitting.
+Settings, all optional:
+
+| Variable | Effect |
+| --- | --- |
+| `DUMBEDITOR_PREVIEW` | `blocks`, `sixel`, `kitty` or `auto` (the default) |
+| `DUMBEDITOR_CELL_WIDTH`, `DUMBEDITOR_CELL_HEIGHT` | Pixel size of a terminal cell, used to fit the picture. By default the terminal's own answer is used, else 10x20 |
+| `DUMBEDITOR_COLOR` | `truecolor` or `256` for block art. Terminal.app gets 256 unless it announces 24-bit colour |
+| `DUMBEDITOR_KITTY_COMPRESS` | `1` to compress Kitty frames (the default over SSH), `0` to never |
+| `DUMBEDITOR_FFMPEG_DIR` | A folder holding `ffmpeg`, `ffprobe` and `ffplay`. On macOS, Homebrew's `ffmpeg-full` is used automatically when installed |
 
 ## Agent tools and workspace
 

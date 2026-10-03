@@ -1,12 +1,15 @@
 import { previewRenderSize, rgbToAnsi } from "../../../core/media.js";
+import { rgbToAnsi256 } from "./ansi256.js";
+import { colorMode } from "./color.js";
 import type { Painter } from "./types.js";
 
-/** Half-block characters with 24-bit colour: two picture rows per text row. Works in any terminal. */
+/** Half-block characters in 24-bit colour (256 colours where that is all there is): two picture rows per text row. Works in any terminal. */
 export const blocksPainter: Painter = {
   id: "blocks",
   fps: 10,
+  persistent: false,
   renderSize: (media, columns, rows) => previewRenderSize(media, columns, rows, "blocks"),
-  encode: (rgb, size) => rgbToAnsi(rgb, size.width, size.height),
+  encode: (rgb, size) => (colorMode() === "256" ? rgbToAnsi256(rgb, size.width, size.height) : rgbToAnsi(rgb, size.width, size.height)),
   cells: (size) => ({ columns: size.width, rows: Math.ceil(size.height / 2) }),
   idealRows: (columns, aspect) => Math.ceil((columns - 2) / aspect / 2),
   place(frame, rect) {

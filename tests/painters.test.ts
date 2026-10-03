@@ -36,7 +36,13 @@ test("the blocks painter wraps the existing encoder, size rule and rates", () =>
   assert.equal(painter.fps, 10);
   assert.deepEqual(painter.renderSize(media, 60, 10), previewRenderSize(media, 60, 10, "blocks"));
   const rgb = Buffer.alloc(8 * 6 * 3, 200);
-  assert.equal(painter.encode(rgb, { width: 8, height: 6 }), rgbToAnsi(rgb, 8, 6));
+  const saved = { program: process.env.TERM_PROGRAM, color: process.env.DUMBEDITOR_COLOR };
+  delete process.env.TERM_PROGRAM;
+  delete process.env.DUMBEDITOR_COLOR;
+  try { assert.equal(painter.encode(rgb, { width: 8, height: 6 }), rgbToAnsi(rgb, 8, 6)); } finally {
+    if (saved.program !== undefined) process.env.TERM_PROGRAM = saved.program;
+    if (saved.color !== undefined) process.env.DUMBEDITOR_COLOR = saved.color;
+  }
   assert.deepEqual(painter.cells({ width: 3, height: 6 }), { columns: 3, rows: 3 });
   assert.equal(painter.idealRows(80, 2), Math.ceil((80 - 2) / 2 / 2));
   assert.equal(painter.remove(), "");

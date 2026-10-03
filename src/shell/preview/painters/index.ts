@@ -1,11 +1,12 @@
 import { blocksPainter } from "./blocks.js";
+import { kittyPainter } from "./kitty.js";
 import { sixelPainter } from "./sixel.js";
 import type { Painter, PainterId } from "./types.js";
 
 export type { CellRect, EncodedFrame, Painter, PainterId } from "./types.js";
 export { cellSize } from "./cell-size.js";
 
-const PAINTERS: Record<PainterId, Painter> = { sixel: sixelPainter, blocks: blocksPainter };
+const PAINTERS: Record<PainterId, Painter> = { sixel: sixelPainter, blocks: blocksPainter, kitty: kittyPainter };
 
 export function painterFor(id: PainterId): Painter {
   return PAINTERS[id];

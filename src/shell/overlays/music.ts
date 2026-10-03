@@ -1,7 +1,7 @@
 import { Input, matchesKey } from "@earendil-works/pi-tui";
 import { listMusicTracks, searchMusicTracks, type MusicTrack } from "../../core/music-catalog.js";
 import { bold, accent, dim, inverse, yellow } from "../views/style.js";
-import { box, fill, isPrintable, listWindow, Panel, setValueAtEnd, wrapIndex, type PanelContext } from "./frame.js";
+import { box, fill, isTextInput, listWindow, Panel, setValueAtEnd, wrapIndex, type PanelContext } from "./frame.js";
 
 export interface MusicPanelServices {
   /** Start previewing a track; `onEnd` and `onError` report back when it stops. Throws if it cannot start. */
@@ -72,7 +72,7 @@ export class MusicPanel extends Panel {
       return;
     } else if (matchesKey(data, "ctrl+u")) {
       this.search.setValue(""); this.selected = 0;
-    } else if (isPrintable(data) || matchesKey(data, "backspace") || matchesKey(data, "delete")) {
+    } else if (isTextInput(data) || matchesKey(data, "backspace") || matchesKey(data, "delete")) {
       const before = this.search.getValue();
       this.search.handleInput(data);
       if (this.search.getValue() !== before) this.selected = 0;

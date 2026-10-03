@@ -22,7 +22,21 @@ export class HelpPanel extends Panel {
       dim(`Ask ${this.options.model()} normally: “remove the first two seconds and the last ten”.`),
       dim("Esc closes this panel"),
     ];
-    return fill(box(lines, width, { border: "round", color: accent }), width, this.rows);
+    // On a short terminal the band is only about 11 rows: use a version with the same facts in fewer lines.
+    const compact = [
+      bold(accent("DumbEditor controls")),
+      "Ctrl+P play/pause  ←/→ seek 5s  +/- volume  [ set in  ] set out",
+      "/clip-remove FROM TO  /clip-keep FROM TO  /speed FROM TO FACTOR  /mute FROM TO",
+      "/crop WxH [X,Y]  /open path  /projects  /version [all]  /revert id  /undo",
+      "/export [path]  /version-limits [N]  /model  /bg-music  /assets (Ctrl+O)",
+      "/permissions [ask|auto]  /budget [USD]  /compact",
+      dim("Ctrl+Backspace/Delete word, Ctrl+U/K row · / commands, ↑/↓ choose, Tab complete"),
+      dim("Agent working: Enter steers, Esc stops · ↑/↓ PgUp/PgDn scroll, Ctrl+G chat"),
+      dim("Esc closes this panel"),
+    ];
+    const room = this.rows - 2;
+    const shown = lines.length <= room ? lines : compact.length <= room ? compact : [...compact.slice(0, Math.max(1, room - 1)), compact[compact.length - 1] as string];
+    return fill(box(shown, width, { border: "round", color: accent }), width, this.rows);
   }
 
   handleInput(data: string): void {

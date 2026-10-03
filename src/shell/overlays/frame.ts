@@ -78,6 +78,11 @@ export function isPrintable(data: string): boolean {
   return data.length > 0 && data.charCodeAt(0) !== 27 && ![...data].some((character) => character < " ");
 }
 
+/** True for typed text and for a bracketed paste (terminals wrap pasted text in ESC[200~ ... ESC[201~). */
+export function isTextInput(data: string): boolean {
+  return isPrintable(data) || data.startsWith("[200~");
+}
+
 /** Set a text field's value with the cursor at the end, where the user expects to keep typing. */
 export function setValueAtEnd(input: Input, value: string): void {
   input.setValue(value);

@@ -54,6 +54,28 @@ test("missing encoders and filters are named", () => {
   assert.match(byLabel(buildReport({ ...base, ffmpeg: noOverlay }), /filters/i)?.detail ?? "", /overlay/);
 });
 
+test("the FFmpeg that is used is shown when it is not the one on PATH, and a bad folder is a failure", () => {
+  const shown = buildReport({ ...base, ffmpegPath: "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg" });
+  assert.match(byLabel(shown, /^ffmpeg$/i)?.detail ?? "", /ffmpeg-full/);
+  const bad = buildReport({ ...base, ffmpegDirectoryProblem: "DUMBEDITOR_FFMPEG_DIR is /x, but there is no /x/ffmpeg" });
+  assert.equal(bad.ok, false);
+  assert.equal(byLabel(bad, /folder/i)?.status, "fail");
+});
+
+test("a Kitty or Sixel picture is a pass; block art warns with advice for this system and says when it is 256 colours", () => {
+  for (const id of ["kitty", "sixel"] as const) {
+    const ok = byLabel(buildReport({ ...base, painter: { id, reason: "the terminal answered" } }), /terminal/i);
+    assert.equal(ok?.status, "ok", id);
+    assert.match(ok?.detail ?? "", id === "kitty" ? /Kitty/ : /Sixel/);
+  }
+  const mac = byLabel(buildReport({ ...base, platform: "darwin", colors: "256" }), /terminal/i);
+  assert.equal(mac?.status, "warn");
+  assert.match(mac?.detail ?? "", /256 colours/);
+  assert.match((mac?.fix ?? []).join(" "), /Ghostty, kitty, WezTerm or iTerm2/);
+  assert.match((byLabel(buildReport({ ...base, platform: "linux" }), /terminal/i)?.fix ?? []).join(" "), /Konsole/);
+  assert.match((byLabel(buildReport({ ...base, platform: "win32" }), /terminal/i)?.fix ?? []).join(" "), /Windows Terminal/);
+});
+
 test("old Node fails; a missing ffplay, key, sandbox and a block-art terminal only warn", () => {
   assert.equal(buildReport({ ...base, node: "v20.11.0" }).ok, false);
   const report = buildReport({ ...base, ffplay: false, providerKey: false, sandbox: { available: false, detail: "bubblewrap is missing" } });

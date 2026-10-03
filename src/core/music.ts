@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { findMusicTrack, type MusicTrack } from "./music-catalog.js";
+import { resolveBinary } from "./binaries.js";
 import { terminateProcess, trackProcess } from "./process.js";
 
 export interface MusicSelection {
@@ -141,7 +142,7 @@ function boundedNumber(value: number | undefined, fallback: number, minimum: num
 
 function spawnMusicPreview(_track: MusicTrack, args: readonly string[]): SpawnedMusicPreview {
   let stderr = "";
-  const process = trackProcess(spawn("ffplay", [...args], {
+  const process = trackProcess(spawn(resolveBinary("ffplay"), [...args], {
     windowsHide: true,
     stdio: ["ignore", "ignore", "pipe"],
   }));

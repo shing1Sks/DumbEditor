@@ -1,9 +1,12 @@
+import { ffmpegDirectoryProblem, resolveBinary } from "../core/binaries.js";
 import { loadCapabilities, type FfmpegCapabilities } from "../core/ffmpeg-capabilities.js";
-import { detectPreviewBackend } from "../core/media.js";
 import { runProcess } from "../core/process.js";
 import { localSandboxStatus } from "../core/sandbox.js";
 import { loadCanvas } from "../core/text-image.js";
-import { explainBackend, type PainterId } from "../shell/preview/painters/index.js";
+import { colorMode, type ColorMode } from "../shell/preview/painters/color.js";
+import { detectPainter } from "../shell/preview/painters/detect.js";
+import type { PainterId } from "../shell/preview/painters/index.js";
+import { probeStdio } from "../shell/preview/painters/probe.js";
 import { installHints } from "./hints.js";
 
 /** Filters the editor's own commands use. Every FFmpeg build has them. */
@@ -18,10 +21,16 @@ export interface DoctorInputs {
   node: string;
   platform: NodeJS.Platform;
   ffmpeg: FfmpegCapabilities | null;
+  /** The FFmpeg that runs when it is not the one on PATH (DUMBEDITOR_FFMPEG_DIR, or Homebrew's ffmpeg-full), else null. */
+  ffmpegPath?: string | null;
+  /** Set when DUMBEDITOR_FFMPEG_DIR names a folder that has no ffmpeg. */
+  ffmpegDirectoryProblem?: string | null;
   ffprobe: boolean;
   ffplay: boolean;
   imageLibrary: boolean;
   painter: { id: PainterId; reason: string };
+  /** How many colours block art uses here. */
+  colors?: ColorMode;
   sandbox: { available: boolean; detail: string };
   providerKey: boolean;
 }
@@ -45,8 +54,9 @@ export function buildReport(inputs: DoctorInputs): DoctorReport {
     : { label: "Node", status: "fail", detail: `${inputs.node} is too old`, fix: [`Install Node ${MINIMUM_NODE.join(".")} or newer: https://nodejs.org`] });
 
   const caps = inputs.ffmpeg;
+  if (inputs.ffmpegDirectoryProblem) add({ label: "FFmpeg folder", status: "fail", detail: inputs.ffmpegDirectoryProblem, fix: ["Point DUMBEDITOR_FFMPEG_DIR at the folder that holds ffmpeg, ffprobe and ffplay, or unset it."] });
   add(caps
-    ? { label: "FFmpeg", status: "ok", detail: caps.version ? `version ${caps.version}` : "found" }
+    ? { label: "FFmpeg", status: "ok", detail: `${caps.version ? `version ${caps.version}` : "found"}${inputs.ffmpegPath ? ` (${inputs.ffmpegPath})` : ""}` }
     : { label: "FFmpeg", status: "fail", detail: "ffmpeg did not run", fix: hints });
   add(inputs.ffprobe
     ? { label: "ffprobe", status: "ok", detail: "found" }
@@ -75,12 +85,18 @@ export function buildReport(inputs: DoctorInputs): DoctorReport {
   add(inputs.ffplay
     ? { label: "ffplay", status: "ok", detail: "found (the preview plays sound)" }
     : { label: "ffplay", status: "warn", detail: "not found: the preview plays without sound", fix: hints });
-  add(inputs.painter.id === "sixel"
-    ? { label: "Terminal picture", status: "ok", detail: `sharp Sixel picture (${inputs.painter.reason})` }
-    : {
-        label: "Terminal picture", status: "warn", detail: `block art (${inputs.painter.reason})`,
-        fix: ["For a sharp picture use Windows Terminal or a terminal with Sixel, or set DUMBEDITOR_PREVIEW=sixel if yours supports it."],
-      });
+  if (inputs.painter.id === "kitty" || inputs.painter.id === "sixel") {
+    add({ label: "Terminal picture", status: "ok", detail: `sharp ${inputs.painter.id === "kitty" ? "Kitty" : "Sixel"} picture (${inputs.painter.reason})` });
+  } else {
+    const sharp = inputs.platform === "darwin" ? "Ghostty, kitty, WezTerm or iTerm2 (Terminal.app cannot show a picture)"
+      : inputs.platform === "win32" ? "Windows Terminal"
+        : "kitty, Ghostty, WezTerm, foot or Konsole";
+    add({
+      label: "Terminal picture", status: "warn",
+      detail: `block art${inputs.colors === "256" ? " in 256 colours" : ""} (${inputs.painter.reason})`,
+      fix: [`For a sharp picture use ${sharp}. DUMBEDITOR_PREVIEW=kitty or sixel forces one if your terminal has it.`],
+    });
+  }
   add(inputs.sandbox.available
     ? { label: "Agent sandbox", status: "ok", detail: inputs.sandbox.detail }
     : { label: "Agent sandbox", status: "warn", detail: `${inputs.sandbox.detail} (the agent cannot run scripts until this is fixed)` });
@@ -111,9 +127,14 @@ export async function gatherInputs(environment: NodeJS.ProcessEnv = process.env)
   const [ffmpeg, ffprobe, ffplay, canvas, sandbox] = await Promise.all([
     loadCapabilities(), runs("ffprobe"), runs("ffplay"), loadCanvas(), localSandboxStatus().catch(() => ({ available: false, detail: "could not be checked" })),
   ]);
+  const ffmpegFile = resolveBinary("ffmpeg");
+  const detected = await detectPainter({
+    env: environment, platform: process.platform, isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    probe: () => probeStdio(environment),
+  });
   return {
-    node: process.version, platform: process.platform, ffmpeg, ffprobe, ffplay, imageLibrary: canvas !== null,
-    painter: { id: detectPreviewBackend(environment), reason: explainBackend(environment) },
+    node: process.version, platform: process.platform, ffmpeg, ffmpegPath: ffmpegFile === "ffmpeg" ? null : ffmpegFile, ffmpegDirectoryProblem: ffmpegDirectoryProblem(), ffprobe, ffplay, imageLibrary: canvas !== null,
+    painter: { id: detected.id, reason: detected.reason }, colors: colorMode(environment),
     sandbox, providerKey: Boolean(environment.OPENROUTER_API_KEY?.trim()),
   };
 }

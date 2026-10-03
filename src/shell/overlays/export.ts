@@ -53,7 +53,17 @@ export class ExportPanel extends Panel {
       dim("MP4 is broadly compatible. MKV is flexible for local playback and archiving."),
       dim("Tab section · arrows edit/select · type destination · Enter export · Esc close"),
     ];
-    return centered(box(lines, modalWidth, { border: "round", color: accent, paddingX: 2 }), width, this.rows);
+    // On a short terminal the band is only about 11 rows: show the destination, one line for format and compression, and the keys.
+    const compact = [
+      bold(accent("Export video")),
+      ...box(this.path.render(Math.max(8, modalWidth - 10)), modalWidth - 6, { border: "round", color: this.focus === "path" ? accent : gray }),
+      (this.focus === "format" ? accent : (text: string) => text)(`Format ${this.format === "mp4" ? "[ MP4 ]  MKV " : "  MP4  [ MKV ]"}`)
+        + "   " + (this.focus === "compression" ? inverse(accent(` ${preset.label} `)) : ` ${preset.label} `) + dim(`${preset.video} · ${preset.audio}`),
+      dim(preset.description),
+      dim("Tab section · arrows select · type destination · Enter export · Esc close"),
+    ];
+    const shown = lines.length + 2 <= this.rows ? lines : compact;
+    return centered(box(shown, modalWidth, { border: "round", color: accent, paddingX: 2 }), width, this.rows);
   }
 
   handleInput(data: string): void {

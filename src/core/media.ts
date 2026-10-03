@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
 import type { MediaInfo } from "../types.js";
 import { cellSize } from "../shell/preview/painters/cell-size.js";
+import { resolveBinary } from "./binaries.js";
 import { runProcess, terminateProcess, trackProcess } from "./process.js";
 
 interface ProbePayload {
@@ -50,7 +51,7 @@ export interface PreviewSize {
   height: number;
 }
 
-export type PreviewBackend = "sixel" | "blocks";
+export type PreviewBackend = "sixel" | "blocks" | "kitty";
 
 export function detectPreviewBackend(environment: NodeJS.ProcessEnv = process.env): PreviewBackend {
   const override = environment.DUMBEDITOR_PREVIEW?.trim().toLowerCase();
@@ -147,7 +148,7 @@ export function streamRawPreview(options: {
   const fps = options.fps ?? 8;
   const frameBytes = options.size.width * options.size.height * 3;
   const child = trackProcess(spawn(
-    "ffmpeg",
+    resolveBinary("ffmpeg"),
     [
       "-v", "error", "-ss", Math.max(0, options.start).toFixed(3), "-i", options.filePath,
       "-an", "-vf", `fps=${fps},scale=${options.size.width}:${options.size.height}:flags=lanczos`,
@@ -240,6 +241,7 @@ export function encodePreviewFrame(
   size: PreviewSize,
   backend: PreviewBackend,
 ): string {
+  if (backend === "kitty") throw new Error("A Kitty frame is made by the Kitty painter, not by encodePreviewFrame");
   return backend === "sixel"
     ? rgbToSixel(buffer, size.width, size.height)
     : rgbToAnsi(buffer, size.width, size.height);
@@ -258,7 +260,7 @@ export function playAudio(filePath: string, start: number, volume: number, onErr
     let stderr = "";
     let errorReported = false;
     const child = trackProcess(spawn(
-      "ffplay",
+      resolveBinary("ffplay"),
       audioPlayerArguments(filePath, start, volume),
       { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
     ));
