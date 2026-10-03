@@ -44,7 +44,8 @@ export class PlaybackController {
   private pending: { buffer: Buffer; time: number } | null = null;
   private draining = false;
 
-  constructor(private readonly callbacks: PlaybackCallbacks) {}
+  /** `stream` is replaceable so a test can see what the controller asks FFmpeg for. */
+  constructor(private readonly callbacks: PlaybackCallbacks, private readonly deps: { stream?: typeof streamRawPreview } = {}) {}
 
   update(input: PlaybackInput): void {
     const key = JSON.stringify([input.filePath, input.media?.duration, input.media?.width, input.media?.height, input.columns, input.rows, input.backend, input.playing, input.playing ? null : input.time]);
@@ -70,7 +71,7 @@ export class PlaybackController {
       return;
     }
 
-    const preview: PreviewStream = streamRawPreview({
+    const preview: PreviewStream = (this.deps.stream ?? streamRawPreview)({
       filePath, start: playbackStart(input.time, media.duration), size, fps: painter.fps,
       onFrame: (frame, time) => deliver(frame, Math.min(time, media.duration)),
       onEnd: () => { if (generation === this.generation) this.callbacks.onEnd(); },

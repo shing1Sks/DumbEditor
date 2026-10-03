@@ -65,6 +65,10 @@ test("parses encoder names and ignores the legend", () => {
   assert.deepEqual([...names].sort(), ["aac", "gif", "libx264", "srt"]);
 });
 
+test("encoder names with a hyphen are kept", () => {
+  assert.ok(parseEncoders(" V....D libaom-av1            libaom AV1\n V....D libvpx-vp9           libvpx VP9\n").has("libaom-av1"));
+});
+
 test("parses the version", () => {
   assert.equal(parseVersion(VERSION), "7.1.1");
   assert.equal(parseVersion("nonsense"), null);

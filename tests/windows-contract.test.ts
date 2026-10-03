@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { detectPreviewBackend, encodePreviewFrame, previewRenderSize, rgbToAnsi, rgbToSixel } from "../src/core/media.js";
 import { shellLayout } from "../src/shell/layout.js";
+import { painterFor } from "../src/shell/preview/painters/index.js";
 import { buildVideoLayer, frameFits } from "../src/shell/preview/video-layer.js";
 import type { MediaInfo } from "../src/types.js";
 import {
@@ -145,5 +146,8 @@ test("the Sixel and block encoders still produce the recorded bytes", () => {
 });
 
 test("the frame rates the stream asks for are the recorded ones", () => {
+  // The recorded rates; tests/painters.test.ts checks that playback actually asks FFmpeg for the painter's rate.
   assert.deepEqual(LEGACY_FPS, { sixel: 12, blocks: 10 });
+  assert.equal(painterFor("sixel").fps, LEGACY_FPS.sixel);
+  assert.equal(painterFor("blocks").fps, LEGACY_FPS.blocks);
 });

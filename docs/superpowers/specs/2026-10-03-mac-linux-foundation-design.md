@@ -131,7 +131,7 @@ The probing and the report are separate so tests need no FFmpeg: `parseFilters(t
 ### 6.3 Captions
 
 `prepareSubtitles` keeps its code for the libass path.
-- **images:** SRT and VTT are parsed into cues (`core/captions.ts`), each cue is drawn as a PNG, and overlays are chained, one per cue, each with its own time window. The cue count is capped (200). More cues: the error says what to install and points to `dumbeditor doctor`.
+- **images:** SRT and VTT are parsed into cues (`core/captions.ts`), each cue is drawn as a PNG, and overlays are chained, one per cue, each with its own time window. The cue count is capped (100). More cues: the error says what to install and points to `dumbeditor doctor`.
 - `.ass` and `.ssa` files need libass for their styling. Without it the error says so. They are not approximated.
 
 ### 6.4 Fonts and the dependency
@@ -166,8 +166,9 @@ Branch `platform/foundation` off `master` (this commit). Commits: goldens first,
 
 1. **Optional native dependency on Windows.** Measured: `@napi-rs/canvas` is 0.1 MB of JavaScript plus a platform package; the win32-x64 one is **36.6 MB unpacked**. npm installs it on Windows too (optional dependencies install by default), although Windows has libass and never uses it. Still open for the owner: accept it, or publish a tiny `os`-restricted wrapper package so Windows skips it, or replace it with a pure-JavaScript renderer. Nothing is published by this work.
 2. **Font: decided.** Bold Noto Sans subsets (Latin, Latin Extended, Cyrillic, Greek) as WOFF from `@fontsource/noto-sans`, about 118 KB in total, SIL OFL, in `assets/fonts/`. The library accepts WOFF. Scripts the subsets do not cover (CJK, emoji) fall back to system fonts, best effort.
-3. **Caption cap: kept at 200.** Each cue is a small cropped image decoded once, so the cost is in the filter graph, not the images. The cap is still a guess and is the first thing to revisit if someone captions a long video on a machine without libass.
+3. **Caption cap: 100 (lowered from 200 after review).** Each cue is a small cropped image decoded once and one open file; macOS defaults to 256 open files per process, so 200 inputs plus FFmpeg's own would be close. The cap is still a guess and is the first thing to revisit if someone captions a long video on a machine without libass. A subtitle file over 2 MB is refused before it is read.
 4. **`FFMPEG_PATH`** (point to a specific FFmpeg, useful for the keg-only `ffmpeg-full`) is left out to keep this step small. It touches every `spawn("ffmpeg")` call and belongs with step 3 or its own change.
 5. **Warp and Konsole** image support is unverified; it only matters in step 3.
 6. **macOS CI** installs the slim Homebrew FFmpeg on purpose. It is the hardest case for the text path and must pass.
+8. **Found in the independent review and fixed:** text on a rotated phone clip was measured on the stored frame instead of the upright one (the image path now reads the rotation; the libass path is untouched), a blank SRT separator with stray spaces merged two cues, overlapping captions printed on top of each other (they now stack upward), bundled fonts that failed to register were silent (now an error that names the problem), a failed FFmpeg probe was remembered for the whole process (now only a successful one is), and two tests that did not pin what they claimed (frame rate, the remove hook) now do.
 7. **Found while building:** newer FFmpeg builds print two flag columns in `-filters` where older ones print three; the parser accepts both and a test reads the real FFmpeg on whatever machine runs the suite.

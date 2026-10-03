@@ -31,7 +31,7 @@ export function parseFilters(text: string): Set<string> {
 export function parseEncoders(text: string): Set<string> {
   const names = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
-    const match = /^\s*[VAS][.FSXBD]{5}\s+([A-Za-z0-9_]+)(?:\s|$)/.exec(line);
+    const match = /^\s*[VAS][.FSXBD]{5}\s+([A-Za-z0-9_-]+)(?:\s|$)/.exec(line);
     if (match?.[1]) names.add(match[1]);
   }
   return names;
@@ -55,12 +55,14 @@ export async function loadCapabilities(run: RunCommand = defaultRun): Promise<Ff
   }
 }
 
-let cached: Promise<FfmpegCapabilities | null> | null = null;
+let cached: FfmpegCapabilities | null = null;
 
-/** Asked once per process. */
-export function ffmpegCapabilities(): Promise<FfmpegCapabilities | null> {
-  cached ??= loadCapabilities();
-  return cached;
+/** Asked until it works, then remembered for the process. A failed probe (a timeout, say) is not remembered. */
+export async function ffmpegCapabilities(): Promise<FfmpegCapabilities | null> {
+  if (cached) return cached;
+  const caps = await loadCapabilities();
+  if (caps) cached = caps;
+  return caps;
 }
 
 export function resetFfmpegCapabilities(): void {

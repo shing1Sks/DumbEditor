@@ -18,6 +18,16 @@ test("strips tags and positioning codes, drops empty cues and keeps cues sorted"
   ]);
 });
 
+test("a blank separator line with stray spaces still separates cues", () => {
+  const srt = "1\n00:00:01,000 --> 00:00:02,000\nHi\n \n2\n00:00:03,000 --> 00:00:04,000\nBye\n\t\n3\n00:00:05,000 --> 00:00:06,000\nEnd\n";
+  assert.deepEqual(parseCues(srt, ".srt").map((cue) => cue.text), ["Hi", "Bye", "End"]);
+});
+
+test("only real tags are removed: a < b stays, entities are decoded", () => {
+  const srt = "1\n00:00:01,000 --> 00:00:02,000\nif a < b and c > d &amp; <b>bold</b>&nbsp;ok\n";
+  assert.deepEqual(parseCues(srt, ".srt").map((cue) => cue.text), ["if a < b and c > d & bold ok"]);
+});
+
 test("overlapping cues are both kept", () => {
   const cues = parseCues("1\n00:00:01,000 --> 00:00:03,000\nA\n\n2\n00:00:02,000 --> 00:00:04,000\nB\n", ".srt");
   assert.equal(cues.length, 2);

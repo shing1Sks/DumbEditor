@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ImageTextUnavailable, loadCanvas, overrideCanvasLoader, renderTextImage, wrapLines } from "../src/core/text-image.js";
+import { FONT_FAMILIES, ImageTextUnavailable, loadCanvas, overrideCanvasLoader, renderTextImage, wrapLines } from "../src/core/text-image.js";
 
 const width = (text: string) => text.length * 10;
 
@@ -64,6 +64,12 @@ test("long, multi-line, emoji and Cyrillic text still fits the frame, and a huge
     const image = await renderTextImage({ videoWidth: 320, videoHeight: 180, text: item.text, fontSize: item.fontSize, color: "#ffcc00", position: "bottom-right" });
     assert.ok(image.x >= 0 && image.y >= 0 && image.x + image.width <= 320 && image.y + image.height <= 180, `${item.text.slice(0, 12)} fits`);
   }
+});
+
+test("all four bundled font families are registered", async (t) => {
+  const canvas = await canvasOrSkip(t);
+  if (!canvas) return;
+  for (const family of FONT_FAMILIES) assert.ok(canvas.GlobalFonts.has(family), `${family} is registered`);
 });
 
 test("without the canvas library the error points to dumbeditor doctor", async () => {

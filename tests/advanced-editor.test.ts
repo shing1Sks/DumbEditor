@@ -145,6 +145,56 @@ test("text and captions drawn as images appear inside their time range only", { 
   }
 });
 
+test("text on a rotated phone clip is placed on the upright frame, not the stored one", { timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-rotated-"));
+  try {
+    const base = join(directory, "base.mp4");
+    await createFixtures({ source: base, music: join(directory, "m.wav"), image: join(directory, "o.ppm"), subtitles: join(directory, "c.srt") });
+    const rotated = join(directory, "rotated.mp4");
+    await runProcess("ffmpeg", ["-y", "-v", "error", "-display_rotation", "90", "-i", base, "-c", "copy", rotated], { timeoutMs: 30_000 });
+    const store = await ProjectStore.open(rotated);
+    await withImageRenderer(async () => {
+      const result = await executeAdvancedEdit(store, {
+        action: "text", text: "Hello there", range: { start: 0.2, end: 1.5 }, position: "bottom-center", fontSize: 14, color: "#ffffff",
+      }, "add title");
+      const media = await probeMedia(result.version.filePath);
+      assert.deepEqual([media.width, media.height], [90, 160], "the render is upright");
+      const frame = await rawFrame(result.version.filePath, 0.8);
+      const half = (90 * 160 * 3) / 2;
+      let top = 0;
+      let bottom = 0;
+      for (let offset = 0; offset + 2 < frame.length; offset += 3) {
+        if ((frame[offset] ?? 0) + (frame[offset + 1] ?? 0) + (frame[offset + 2] ?? 0) > 650) { if (offset < half) top += 1; else bottom += 1; }
+      }
+      assert.ok(bottom > 20, `text in the lower half (${bottom})`);
+      assert.ok(top < 5, `and none in the upper half (${top})`);
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("overlapping captions are stacked, not printed on top of each other", { timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-overlap-"));
+  try {
+    const source = join(directory, "source.mp4");
+    const subtitles = join(directory, "overlap.srt");
+    await createFixtures({ source, music: join(directory, "m.wav"), image: join(directory, "o.ppm"), subtitles: join(directory, "c.srt") });
+    await writeFile(subtitles, "1\n00:00:00,200 --> 00:00:01,200\nAAAA AAAA\n\n2\n00:00:00,500 --> 00:00:01,500\nBBBB BBBB\n\n", "utf8");
+    const store = await ProjectStore.open(source);
+    await withImageRenderer(async () => {
+      const result = await executeAdvancedEdit(store, { action: "subtitles", filePath: subtitles }, "captions");
+      const onlyFirst = await brightPixelCount(result.version.filePath, 0.35);
+      const both = await brightPixelCount(result.version.filePath, 0.8);
+      const onlySecond = await brightPixelCount(result.version.filePath, 1.4);
+      assert.ok(onlyFirst > 10 && onlySecond > 10, `each cue shows alone (${onlyFirst}, ${onlySecond})`);
+      assert.ok(both > Math.max(onlyFirst, onlySecond) * 1.5, `both show at once, side by side in height (${both} vs ${onlyFirst}, ${onlySecond})`);
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("without libass an .ass file, an empty caption file and too many cues are refused before anything is saved", { timeout: 120_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "dumbeditor-images-errors-"));
   try {
@@ -167,6 +217,9 @@ test("without libass an .ass file, an empty caption file and too many cues are r
       const many = join(directory, "many.srt");
       await writeFile(many, body, "utf8");
       await assert.rejects(executeAdvancedEdit(store, { action: "subtitles", filePath: many }, "x"), /limit[\s\S]*dumbeditor doctor/);
+      const huge = join(directory, "huge.srt");
+      await writeFile(huge, "1\n00:00:01,000 --> 00:00:02,000\n" + "x".repeat(2_100_000) + "\n", "utf8");
+      await assert.rejects(executeAdvancedEdit(store, { action: "subtitles", filePath: huge }, "x"), /too large[\s\S]*dumbeditor doctor/);
       overrideCanvasLoader(async () => null);
       try {
         await assert.rejects(

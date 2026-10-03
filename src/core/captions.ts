@@ -13,7 +13,8 @@ function seconds(text: string): number | null {
 export function parseCues(source: string, extension: ".srt" | ".vtt"): Cue[] {
   const text = source.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
   const cues: Cue[] = [];
-  for (const block of text.split(/\n{2,}/)) {
+  // A separator is a blank line, even one with stray spaces on it.
+  for (const block of text.split(/\n(?:[ \t]*\n)+/)) {
     const lines = block.split("\n");
     if (extension === ".vtt" && /^(WEBVTT|NOTE|STYLE|REGION)\b/.test(lines[0]?.trim() ?? "")) continue;
     const timing = lines.findIndex((line) => line.includes("-->"));
@@ -24,7 +25,8 @@ export function parseCues(source: string, extension: ".srt" | ".vtt"): Cue[] {
     if (start === null || end === null || end <= start) continue;
     const body = lines.slice(timing + 1).join("\n")
       .replace(/\{\\[^}]*\}/g, "")
-      .replace(/<[^>]*>/g, "")
+      .replace(/<\/?[A-Za-z][^>]*>/g, "")
+      .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
       .split("\n").map((line) => line.trim()).join("\n").trim();
     if (body) cues.push({ start, end, text: body });
   }

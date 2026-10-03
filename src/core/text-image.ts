@@ -45,14 +45,25 @@ export function overrideCanvasLoader(loader: (() => Promise<CanvasModule | null>
 export function loadCanvas(): Promise<CanvasModule | null> {
   if (override) return override();
   loaded ??= import("@napi-rs/canvas")
-    .then((canvas) => {
-      const directory = fontDirectory();
-      for (const [family, file] of FONT_FILES) canvas.GlobalFonts.registerFromPath(join(directory, file), family);
-      return canvas;
-    })
-    .catch(() => null);
+    .then((canvas) => { registerFonts(canvas); return canvas; }, () => null);
   return loaded;
 }
+
+/** Why the bundled fonts could not be registered, or null when they are. The library itself is fine in that case. */
+let fontProblem: string | null = null;
+
+function registerFonts(canvas: CanvasModule): void {
+  try {
+    const directory = fontDirectory();
+    const failed = FONT_FILES.filter(([family, file]) => !canvas.GlobalFonts.registerFromPath(join(directory, file), family));
+    fontProblem = failed.length === 0 ? null : `could not register ${failed.map(([, file]) => file).join(", ")}`;
+  } catch (error) {
+    fontProblem = error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** The families the bundled fonts register under (for tests and diagnostics). */
+export const FONT_FAMILIES: readonly string[] = FONT_FILES.map(([family]) => family);
 
 /** Greedy word wrap. Explicit line breaks stay, and a word longer than the line gets a line of its own. */
 export function wrapLines(text: string, maxWidth: number, widthOf: (text: string) => number): string[] {
@@ -93,6 +104,7 @@ export async function renderTextImage(options: TextImageOptions): Promise<TextIm
   if (!/^#?[0-9a-f]{6}$/i.test(options.color)) throw new Error("Text color must be a six digit hex color");
   const canvas = await loadCanvas();
   if (!canvas) throw new ImageTextUnavailable();
+  if (fontProblem) throw new Error(`The bundled fonts for drawing text could not be loaded (${fontProblem}). Reinstall DumbEditor, or use an FFmpeg with libass (run \`dumbeditor doctor\`).`);
   const font = `bold ${options.fontSize}px ${FONT_STACK}`;
   const measure = canvas.createCanvas(1, 1).getContext("2d");
   measure.font = font;

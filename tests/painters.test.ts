@@ -4,8 +4,10 @@ import { previewRenderSize, rgbToAnsi, rgbToSixel } from "../src/core/media.js";
 import { LayeredTerminal, type VideoLayer } from "../src/shell/preview/layered-terminal.js";
 import { cellSize } from "../src/shell/preview/painters/cell-size.js";
 import { explainBackend, painterFor } from "../src/shell/preview/painters/index.js";
+import { PlaybackController } from "../src/shell/preview/playback.js";
+import { PreviewHost } from "../src/shell/preview/preview-host.js";
 import type { MediaInfo } from "../src/types.js";
-import { FakeTerminal } from "./helpers/fake-terminal.js";
+import { FakeTerminal, STUB_SIXEL } from "./helpers/fake-terminal.js";
 
 const media: MediaInfo = { path: "x.mp4", duration: 10, width: 1920, height: 1080, fps: 24, hasAudio: true, formatName: "mp4" };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -45,6 +47,44 @@ test("explainBackend says why a painter was chosen", () => {
   assert.match(explainBackend({ WT_SESSION: "x" }), /Windows Terminal/);
   assert.match(explainBackend({ TERM: "xterm-sixel" }), /Sixel/);
   assert.match(explainBackend({}), /no Sixel/i);
+});
+
+test("playback asks FFmpeg for the frame rate and size of the painter in use", () => {
+  for (const backend of ["sixel", "blocks"] as const) {
+    const asked: Array<{ fps: number | undefined; size: { width: number; height: number } }> = [];
+    const controller = new PlaybackController(
+      { onFrame: () => undefined, onEnd: () => undefined, onError: () => undefined },
+      { stream: (options) => { asked.push({ fps: options.fps, size: options.size }); return { process: undefined as never, stop: () => undefined }; } },
+    );
+    controller.update({ filePath: "x.mp4", media, columns: 60, rows: 10, backend, playing: true, time: 0 });
+    assert.equal(asked.length, 1, backend);
+    assert.equal(asked[0]?.fps, painterFor(backend).fps, `${backend} frame rate`);
+    assert.deepEqual(asked[0]?.size, painterFor(backend).renderSize(media, 60, 10), `${backend} size`);
+    controller.dispose();
+  }
+  assert.equal(painterFor("sixel").fps, 12);
+  assert.equal(painterFor("blocks").fps, 10);
+});
+
+test("the preview host takes a picture off the screen through its painter when it is hidden", async () => {
+  const painter = painterFor("sixel");
+  const original = painter.remove;
+  let removed = 0;
+  painter.remove = () => { removed += 1; return "<DEL>"; };
+  try {
+    const inner = new FakeTerminal(80, 24);
+    let visible = true;
+    const host = new PreviewHost(inner, { visible: () => visible, rect: () => ({ x: 0, y: 1, w: 80, h: 10 }), screenLines: () => [] });
+    host.setFrame({ encoded: STUB_SIXEL, size: { width: 400, height: 200 }, backend: "sixel" });
+    await tick();
+    assert.equal(removed, 0, "nothing removed while the picture is shown");
+    visible = false;
+    const mark = inner.mark();
+    host.terminal.write("x");
+    await tick();
+    assert.equal(removed, 1);
+    assert.ok(inner.since(mark).includes("<DEL>"), "the painter's removal reached the terminal");
+  } finally { painter.remove = original; }
 });
 
 function layered(remove: (() => string) | undefined) {
