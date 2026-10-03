@@ -3,8 +3,9 @@
 **Direct, agent-first video editing in the terminal.**
 
 ```bash
-npx dumbeditor@latest setup
-npx dumbeditor@latest "./video.mp4"
+npm install -g dumbeditor
+dumbeditor setup
+dumbeditor "./video.mp4"
 ```
 
 DumbEditor is the first tool in **DUMB: Direct Unbounded Media Builder**.
@@ -36,26 +37,31 @@ The goal is capable software with a small surface: one terminal, one conversatio
 
 ## Install
 
+### Install the command
+
+```bash
+npm install -g dumbeditor
+dumbeditor setup
+dumbeditor "./video.mp4"
+```
+
+After that, `dumbeditor` is a normal command in any terminal.
+
+### Update
+
+```bash
+dumbeditor update
+```
+
+This installs the newest release from npm (`npm install -g dumbeditor@latest`). DumbEditor looks for a newer version at most once a day, in the background, and tells you after you close the editor. Turn that off with `DUMBEDITOR_NO_UPDATE_CHECK=1`. Preview builds: `dumbeditor update --tag next`.
+
 ### Run without installing
 
-`npx` downloads the current package into npm's cache and runs its single `dumbeditor` executable:
+`npx` downloads the current package into npm's cache and runs it once:
 
 ```bash
 npx dumbeditor@latest setup
 npx dumbeditor@latest "./video.mp4"
-npx dumbeditor@latest --help
-```
-
-Use `@latest` to request the current npm release. On first use, npm may ask permission to download the package.
-
-### Install the command globally
-
-For regular use:
-
-```bash
-npm install --global dumbeditor
-dumbeditor setup
-dumbeditor "./video.mp4"
 ```
 
 ### Run from source
