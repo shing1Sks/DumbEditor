@@ -9,4 +9,6 @@ export default defineConfig({
   dts: false,
   sourcemap: true,
   banner: { js: "#!/usr/bin/env node" },
+  // Native, optional: loaded on first use when text has to be drawn as images.
+  external: ["@napi-rs/canvas"],
 });

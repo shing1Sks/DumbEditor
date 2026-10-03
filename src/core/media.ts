@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
 import type { MediaInfo } from "../types.js";
+import { cellSize } from "../shell/preview/painters/cell-size.js";
 import { runProcess, terminateProcess, trackProcess } from "./process.js";
 
 interface ProbePayload {
@@ -66,8 +67,7 @@ export function previewRenderSize(
   backend: PreviewBackend,
 ): PreviewSize {
   if (backend === "blocks") return previewSize(info, maxColumns, maxRows);
-  const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
-  const cellHeight = positiveInteger(process.env.DUMBEDITOR_CELL_HEIGHT, 20);
+  const { width: cellWidth, height: cellHeight } = cellSize();
   const widthLimit = even(Math.max(0, Math.floor(maxColumns - 2) * cellWidth));
   const heightLimit = even(Math.max(0, Math.floor(maxRows) * cellHeight));
   if (widthLimit < 2 || heightLimit < 2) return { width: 0, height: 0 };
@@ -366,11 +366,6 @@ function parseRate(rate?: string): number {
 function even(value: number): number {
   const rounded = Math.floor(value);
   return rounded % 2 === 0 ? rounded : rounded - 1;
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function quantizeChannel(value: number): number {

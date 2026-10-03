@@ -4,12 +4,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { executeAdvancedEdit } from "../src/core/advanced-editor.js";
+import { executeAdvancedEdit, MAX_IMAGE_CUES } from "../src/core/advanced-editor.js";
 import { AgentWorkspace } from "../src/core/agent-workspace.js";
 import { executeCustomRender } from "../src/core/custom-render.js";
 import { probeMedia } from "../src/core/media.js";
 import { runProcess } from "../src/core/process.js";
 import { ProjectStore } from "../src/core/project.js";
+import { overrideCanvasLoader } from "../src/core/text-image.js";
 
 test("renders local overlays, ranged effects, fades, and looped trimmed music", { timeout: 120_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "dumbeditor-advanced-"));
@@ -23,29 +24,23 @@ test("renders local overlays, ranged effects, fades, and looped trimmed music", 
     const store = await ProjectStore.open(source);
     await store.setVersionLimit(10);
 
-    // Text and burned-in captions need FFmpeg's `ass` filter (libass). Some builds, such as the macOS CI one, lack it.
-    const filters = (await runProcess("ffmpeg", ["-hide_banner", "-filters"])).stdout.toString("utf8");
-    const hasAss = /^\s*\S+\s+ass\s/m.test(filters);
-    if (hasAss) {
-      const text = await executeAdvancedEdit(store, {
-        action: "text",
-        text: "Hello, DumbEditor!",
-        range: { start: 0.3, end: 1.3 },
-        position: "center",
-        fontSize: 24,
-        color: "#ffffff",
-      }, "add title");
-      assert.equal(text.version.action, "Added text at 00:00.3–00:01.3");
-      const textInside = await brightPixelCount(text.version.filePath, 0.8);
-      const textOutside = await brightPixelCount(text.version.filePath, 0.1);
-      assert.ok(textInside > textOutside + 20, `expected more bright text pixels (${textInside} vs ${textOutside})`);
+    // Text and captions go through libass when this FFmpeg has it and are drawn as images when it does not (macOS CI).
+    const text = await executeAdvancedEdit(store, {
+      action: "text",
+      text: "Hello, DumbEditor!",
+      range: { start: 0.3, end: 1.3 },
+      position: "center",
+      fontSize: 24,
+      color: "#ffffff",
+    }, "add title");
+    assert.equal(text.version.action, "Added text at 00:00.3–00:01.3");
+    const textInside = await brightPixelCount(text.version.filePath, 0.8);
+    const textOutside = await brightPixelCount(text.version.filePath, 0.1);
+    assert.ok(textInside > textOutside + 20, `expected more bright text pixels (${textInside} vs ${textOutside})`);
 
-      await store.revert("v0000");
-      const captioned = await executeAdvancedEdit(store, { action: "subtitles", filePath: subtitles }, "burn captions");
-      assert.ok(await changedPixelCount(captioned.version.filePath, 0.1, 0.8) > 20);
-    } else {
-      console.warn("advanced-editor: this FFmpeg has no `ass` filter, so the text and subtitles checks are skipped");
-    }
+    await store.revert("v0000");
+    const captioned = await executeAdvancedEdit(store, { action: "subtitles", filePath: subtitles }, "burn captions");
+    assert.ok(await changedPixelCount(captioned.version.filePath, 0.1, 0.8) > 20);
 
     await store.revert("v0000");
     const overlaid = await executeAdvancedEdit(store, {
@@ -102,12 +97,138 @@ test("renders local overlays, ranged effects, fades, and looped trimmed music", 
     const latePeak = await audioPeak(mixed.version.filePath, 1.8, 0.2);
     assert.ok(latePeak > 300 && latePeak < 1_500, `unexpected mixed peak ${latePeak}`);
 
-    // The original plus one version per edit; the text and subtitles edits are missing when they were skipped.
-    assert.equal(store.snapshot.versions.length, hasAss ? 7 : 5);
+    assert.equal(store.snapshot.versions.length, 7);
     for (const version of store.snapshot.versions.slice(1)) {
       assert.equal((await probeMedia(version.filePath)).width, 160);
       assert.equal((await probeMedia(version.filePath)).height, 90);
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+async function withImageRenderer<T>(body: () => Promise<T>): Promise<T> {
+  const saved = process.env.DUMBEDITOR_TEXT_RENDERER;
+  process.env.DUMBEDITOR_TEXT_RENDERER = "images";
+  try { return await body(); } finally {
+    if (saved === undefined) delete process.env.DUMBEDITOR_TEXT_RENDERER; else process.env.DUMBEDITOR_TEXT_RENDERER = saved;
+  }
+}
+
+test("text and captions drawn as images appear inside their time range only", { timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-images-"));
+  try {
+    const source = join(directory, "source.mp4");
+    const subtitles = join(directory, "captions.srt");
+    await createFixtures({ source, music: join(directory, "music.wav"), image: join(directory, "overlay.ppm"), subtitles });
+    const store = await ProjectStore.open(source);
+    await store.setVersionLimit(10);
+    await withImageRenderer(async () => {
+      const text = await executeAdvancedEdit(store, {
+        action: "text", text: "Hello, DumbEditor!", range: { start: 0.3, end: 1.3 }, position: "center", fontSize: 24, color: "#ffffff",
+      }, "add title");
+      assert.equal(text.version.action, "Added text at 00:00.3–00:01.3");
+      const inside = await brightPixelCount(text.version.filePath, 0.8);
+      const before = await brightPixelCount(text.version.filePath, 0.1);
+      const after = await brightPixelCount(text.version.filePath, 2.0);
+      assert.ok(inside > before + 20, `text appears inside the range (${inside} vs ${before})`);
+      assert.ok(after <= before + 5, `and is gone after it (${after} vs ${before})`);
+
+      await store.revert("v0000");
+      const captioned = await executeAdvancedEdit(store, { action: "subtitles", filePath: subtitles }, "burn captions");
+      assert.equal(captioned.version.action, "Burned in subtitles");
+      assert.ok(await changedPixelCount(captioned.version.filePath, 0.1, 0.8) > 20, "the cue shows up");
+      assert.ok(await changedPixelCount(captioned.version.filePath, 0.1, 2.0) < 5, "and is gone after its time");
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("text on a rotated phone clip is placed on the upright frame, not the stored one", { timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-rotated-"));
+  try {
+    const base = join(directory, "base.mp4");
+    await createFixtures({ source: base, music: join(directory, "m.wav"), image: join(directory, "o.ppm"), subtitles: join(directory, "c.srt") });
+    const rotated = join(directory, "rotated.mp4");
+    await runProcess("ffmpeg", ["-y", "-v", "error", "-display_rotation", "90", "-i", base, "-c", "copy", rotated], { timeoutMs: 30_000 });
+    const store = await ProjectStore.open(rotated);
+    await withImageRenderer(async () => {
+      const result = await executeAdvancedEdit(store, {
+        action: "text", text: "Hello there", range: { start: 0.2, end: 1.5 }, position: "bottom-center", fontSize: 14, color: "#ffffff",
+      }, "add title");
+      const media = await probeMedia(result.version.filePath);
+      assert.deepEqual([media.width, media.height], [90, 160], "the render is upright");
+      const frame = await rawFrame(result.version.filePath, 0.8);
+      const half = (90 * 160 * 3) / 2;
+      let top = 0;
+      let bottom = 0;
+      for (let offset = 0; offset + 2 < frame.length; offset += 3) {
+        if ((frame[offset] ?? 0) + (frame[offset + 1] ?? 0) + (frame[offset + 2] ?? 0) > 650) { if (offset < half) top += 1; else bottom += 1; }
+      }
+      assert.ok(bottom > 20, `text in the lower half (${bottom})`);
+      assert.ok(top < 5, `and none in the upper half (${top})`);
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("overlapping captions are stacked, not printed on top of each other", { timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-overlap-"));
+  try {
+    const source = join(directory, "source.mp4");
+    const subtitles = join(directory, "overlap.srt");
+    await createFixtures({ source, music: join(directory, "m.wav"), image: join(directory, "o.ppm"), subtitles: join(directory, "c.srt") });
+    await writeFile(subtitles, "1\n00:00:00,200 --> 00:00:01,200\nAAAA AAAA\n\n2\n00:00:00,500 --> 00:00:01,500\nBBBB BBBB\n\n", "utf8");
+    const store = await ProjectStore.open(source);
+    await withImageRenderer(async () => {
+      const result = await executeAdvancedEdit(store, { action: "subtitles", filePath: subtitles }, "captions");
+      const onlyFirst = await brightPixelCount(result.version.filePath, 0.35);
+      const both = await brightPixelCount(result.version.filePath, 0.8);
+      const onlySecond = await brightPixelCount(result.version.filePath, 1.4);
+      assert.ok(onlyFirst > 10 && onlySecond > 10, `each cue shows alone (${onlyFirst}, ${onlySecond})`);
+      assert.ok(both > Math.max(onlyFirst, onlySecond) * 1.5, `both show at once, side by side in height (${both} vs ${onlyFirst}, ${onlySecond})`);
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("without libass an .ass file, an empty caption file and too many cues are refused before anything is saved", { timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dumbeditor-images-errors-"));
+  try {
+    const source = join(directory, "source.mp4");
+    await createFixtures({ source, music: join(directory, "m.wav"), image: join(directory, "o.ppm"), subtitles: join(directory, "c.srt") });
+    const store = await ProjectStore.open(source);
+    await withImageRenderer(async () => {
+      const ass = join(directory, "styled.ass");
+      await writeFile(ass, "[Script Info]\n", "utf8");
+      await assert.rejects(executeAdvancedEdit(store, { action: "subtitles", filePath: ass }, "x"), /libass[\s\S]*dumbeditor doctor/);
+      const empty = join(directory, "empty.srt");
+      await writeFile(empty, "nothing here", "utf8");
+      await assert.rejects(executeAdvancedEdit(store, { action: "subtitles", filePath: empty }, "x"), /no readable cues/);
+      const srtTime = (seconds: number) => {
+        const ms = Math.round(seconds * 1000);
+        return `00:00:${String(Math.floor(ms / 1000)).padStart(2, "0")},${String(ms % 1000).padStart(3, "0")}`;
+      };
+      let body = "";
+      for (let index = 0; index < MAX_IMAGE_CUES + 1; index += 1) body += `${index + 1}\n${srtTime(index * 0.01)} --> ${srtTime(2.2)}\ncue ${index}\n\n`;
+      const many = join(directory, "many.srt");
+      await writeFile(many, body, "utf8");
+      await assert.rejects(executeAdvancedEdit(store, { action: "subtitles", filePath: many }, "x"), /limit[\s\S]*dumbeditor doctor/);
+      const huge = join(directory, "huge.srt");
+      await writeFile(huge, "1\n00:00:01,000 --> 00:00:02,000\n" + "x".repeat(2_100_000) + "\n", "utf8");
+      await assert.rejects(executeAdvancedEdit(store, { action: "subtitles", filePath: huge }, "x"), /too large[\s\S]*dumbeditor doctor/);
+      overrideCanvasLoader(async () => null);
+      try {
+        await assert.rejects(
+          executeAdvancedEdit(store, { action: "text", text: "Hi", range: { start: 0.2, end: 1 }, position: "center" }, "x"),
+          /Advanced edit failed:[\s\S]*dumbeditor doctor/,
+        );
+      } finally { overrideCanvasLoader(null); }
+    });
+    assert.equal(store.snapshot.versions.length, 1, "nothing was committed");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

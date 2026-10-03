@@ -1,5 +1,6 @@
 import type { PreviewBackend } from "../core/media.js";
 import type { MediaInfo } from "../types.js";
+import { painterFor } from "./preview/painters/index.js";
 
 export interface ShellLayout {
   /** Height of the band that holds the sidebars and the video. It never depends on what is typed. */
@@ -33,18 +34,8 @@ export function shellLayout(
   const columns = { leftSidebarColumns: sidebarColumns, videoColumns, rightSidebarColumns: sidebarColumns, gap };
   if (!media) return { bandRows: maximumBand, ...columns };
 
-  const aspect = media.width / media.height;
-  const cellWidth = positiveInteger(process.env.DUMBEDITOR_CELL_WIDTH, 10);
-  const cellHeight = positiveInteger(process.env.DUMBEDITOR_CELL_HEIGHT, 20);
-  const ideal = backend === "sixel"
-    ? Math.ceil(((videoColumns - 2) * cellWidth) / aspect / cellHeight)
-    : Math.ceil((videoColumns - 2) / aspect / 2);
+  const ideal = painterFor(backend).idealRows(videoColumns, media.width / media.height);
   return { bandRows: clamp(ideal, 6, maximumBand), ...columns };
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

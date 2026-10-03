@@ -1,0 +1,39 @@
+{
+  "name": "dumbeditor-canvas",
+  "version": "0.1.0",
+  "description": "Installs the native canvas library DumbEditor uses to draw text as images on macOS and Linux. Windows skips it.",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.10"
+  },
+  "license": "MIT",
+  "author": "Shreyash Kumar Singh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shing1Sks/DumbEditor.git",
+    "directory": "packages/dumbeditor-canvas"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
