@@ -6,6 +6,18 @@ import type { MediaInfo } from "../../types.js";
 import { playbackStart } from "../input/keys.js";
 import { painterFor } from "./painters/index.js";
 
+/**
+ * One picture at `time`. A video has no frame at exactly its duration (the end of a seek or of playback), so the
+ * request stays just inside it, and tries a little earlier again if the file's last frame is not where its length says.
+ */
+export async function stillFrame(filePath: string, time: number, duration: number, size: PreviewSize, signal: AbortSignal): Promise<Buffer> {
+  const wanted = size.width * size.height * 3;
+  const last = Math.max(0, duration - 0.1);
+  const first = await extractRawFrame(filePath, Math.min(time, last), size, signal);
+  if (first.length >= wanted || time < last) return first;
+  return extractRawFrame(filePath, Math.max(0, duration - 0.6), size, signal);
+}
+
 export interface PlaybackInput {
   filePath: string | null | undefined;
   media: MediaInfo | null;
@@ -63,7 +75,7 @@ export class PlaybackController {
     if (!input.playing) {
       const controller = new AbortController();
       const timer = setTimeout(() => {
-        void extractRawFrame(filePath, input.time, size, controller.signal)
+        void stillFrame(filePath, input.time, media.duration, size, controller.signal)
           .then((frame) => deliver(frame, input.time))
           .catch((error: unknown) => { if (!controller.signal.aborted && generation === this.generation) this.callbacks.onError(toError(error)); });
       }, 40);

@@ -503,6 +503,8 @@ export class ShellApp implements CommandApp {
 
   private onFrame(frame: PlaybackFrame): void {
     this.screen.preview.setFrame(frame);
+    // A picture arrived, so an earlier "Preview unavailable" note is out of date.
+    if (this.state.status.startsWith("Preview unavailable")) this.state.setStatus("Ready");
     if (this.state.playing && Math.abs(frame.time - this.state.playhead) >= 0.1) this.state.setPlayhead(frame.time);
   }
 
