@@ -397,7 +397,8 @@ export class Engine {
       run.controller.abort();
       this.agent.abort();
     }, this.options.stallMs ?? DEFAULT_STALL_MS);
-    run.stallTimer.unref();
+    // Not unref'd: a silent model leaves nothing else alive, and a run that waits on it must not let the process
+    // exit (or a test run end) before this fires. It is cleared when the run ends.
   }
 
   private async recordTurnCost(run: RunState, message: AssistantMessage): Promise<void> {
