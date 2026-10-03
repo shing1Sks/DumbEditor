@@ -211,7 +211,8 @@ export class ShellApp implements CommandApp {
       state.setPlayhead(0);
       state.setStatus(`Opened ${store.name}`);
       state.addMessage("assistant", `Opened ${store.name} · ${editor.media.width}x${editor.media.height} · ${formatTime(editor.media.duration)}`, "editor");
-      if (!engine) state.addMessage("assistant", "Add an OpenRouter API key with dumbeditor setup to talk to the agent. Slash commands still work.", "editor");
+      if (!engine && this.engineNotices.length === 0) state.addMessage("assistant", "Add an OpenRouter API key with dumbeditor setup to talk to the agent. Slash commands still work.", "editor");
+      this.flushEngineNotices();
     } catch (error) {
       state.addMessage("assistant", message(error));
       state.setStatus("Open failed");
@@ -255,11 +256,18 @@ export class ShellApp implements CommandApp {
 
   // Engine ---------------------------------------------------------------------------------------
 
+  /** Why the agent could not start, held until the chat is on screen: loading a project replaces the messages. */
+  private engineNotices: string[] = [];
+
+  private flushEngineNotices(): void {
+    for (const text of this.engineNotices.splice(0)) this.state.addMessage("assistant", text, "error");
+  }
+
   private async createEngine(editor: EditorState, chatSeed: readonly ChatMessage[]): Promise<Engine | null> {
     if (this.options.createEngine) return this.options.createEngine(editor, chatSeed);
     return createAgentEngine({
       state: editor, registry: this.registry, getSettings: () => this.settings, models: this.models, chatSeed,
-      report: (text) => this.state.addMessage("assistant", text, "error"),
+      report: (text) => { this.engineNotices.push(text); },
     });
   }
 
@@ -416,6 +424,8 @@ export class ShellApp implements CommandApp {
     const { state } = this;
     const panel: PanelContext = { bandRows: context.bandRows, requestRender: () => this.screen.tui.requestRender() };
     const close = context.close;
+    // A panel that is being replaced (the asset browser by an approval, say) must stop what it started.
+    this.openPanel?.dispose?.();
     this.openPanel = { kind };
     switch (kind) {
       case "help": return new HelpPanel(panel, { model: () => state.agentModel, close });
@@ -444,7 +454,7 @@ export class ShellApp implements CommandApp {
           save: async ({ capability, provider, slot, model }) => {
             const next = capability === "agent" ? await setBaseAgentModel(provider, model.id) : await setDefaultModel(provider, slot, model.id);
             this.applySettings(next);
-            if (capability === "agent" && this.editor && !this.engine?.running) this.setEngine(await this.createEngine(this.editor, await this.project?.chatHistory() ?? []));
+            if (capability === "agent" && this.editor && !this.engine?.running) { this.setEngine(await this.createEngine(this.editor, await this.project?.chatHistory() ?? [])); this.flushEngineNotices(); }
             state.setStatus(`${model.id} selected`);
             await this.answer(capability === "agent" ? `Base agent set to ${model.id} through ${provider}.` : `Default ${provider} ${slot} model set to ${model.id}.`);
           },

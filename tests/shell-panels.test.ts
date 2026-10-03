@@ -6,6 +6,7 @@ import type { ProviderModel } from "../src/core/models.js";
 import { DEFAULT_SETTINGS } from "../src/core/settings.js";
 import { MUSIC_CATALOG } from "../src/core/music-catalog.js";
 import { ExportPanel } from "../src/shell/overlays/export.js";
+import { HelpPanel } from "../src/shell/overlays/help.js";
 import { ModelPanel, type ModelPanelServices } from "../src/shell/overlays/model.js";
 import { MusicPanel, type MusicPanelServices } from "../src/shell/overlays/music.js";
 import { plain } from "../src/shell/views/style.js";
@@ -205,4 +206,61 @@ test("export: while an export runs the panel ignores every key, including Escape
   panel.handleInput(KEY.esc);
   type(panel, "abc");
   assert.deepEqual([log.performed.length, log.closed, panel.destination], [0, 0, "C:/videos/demo-export.mp4"]);
+});
+
+const PASTE = (text: string) => `\x1b[200~${text}\x1b[201~`;
+
+test("model picker: a second Enter while the choice is being saved does not save it again", async () => {
+  let release: () => void = () => undefined;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const { services, log } = modelServices({ save: async (choice) => { log.saved.push(choice); await pending; } });
+  const panel = new ModelPanel(context, services);
+  panel.handleInput(KEY.enter); panel.handleInput(KEY.enter);
+  await later();
+  panel.handleInput(KEY.enter);
+  panel.handleInput(KEY.enter);
+  panel.handleInput(KEY.enter);
+  await later();
+  assert.equal(log.saved.length, 1, "one save while the first is still running");
+  release();
+  await later();
+  assert.equal(log.saved.length, 1);
+  assert.equal(log.closed, 1);
+});
+
+test("model picker: pasted text reaches the search field", async () => {
+  const { services } = modelServices();
+  const panel = new ModelPanel(context, services);
+  panel.handleInput(KEY.enter); panel.handleInput(KEY.enter);
+  await later();
+  panel.handleInput(PASTE("glm"));
+  assert.equal(panel.picker.query, "glm");
+  assert.ok(!screen(panel.render(WIDTH)).includes("GPT-6 Luna"), "the paste narrowed the list");
+});
+
+test("music: pasted text reaches the search field", () => {
+  const { services } = musicServices();
+  const panel = new MusicPanel(context, services, null, "");
+  const target = MUSIC_CATALOG[2]!;
+  panel.handleInput(PASTE(target.title));
+  assert.ok(panel.tracks.length >= 1 && panel.tracks.length < MUSIC_CATALOG.length, "the paste narrowed the list");
+  assert.ok(panel.tracks.some((track) => track.id === target.id));
+});
+
+test("Help and Export still fit in the 11 rows an 80x24 terminal gives a panel, with the box closed and the way out shown", () => {
+  const short = { bandRows: () => 11, requestRender: () => undefined };
+  const help = new HelpPanel(short, { model: () => "glm", close: () => undefined }).render(80).map(plain);
+  assert.equal(help.length, 11);
+  const helpText = help.join("\n");
+  for (const wanted of ["Ctrl+P", "/export", "/model", "/bg-music", "/speed", "Esc closes this panel", "╰"]) assert.ok(helpText.includes(wanted), `help shows ${wanted}`);
+  const full = new HelpPanel({ bandRows: () => 30, requestRender: () => undefined }, { model: () => "glm", close: () => undefined }).render(80).map(plain).join("\n");
+  assert.ok(full.includes("Ask glm normally"), "the full version is unchanged on a tall terminal");
+
+  const exportPanel = new ExportPanel(short, { sourcePath: "C:/videos/demo.mp4", destination: "C:/videos/demo-export.mp4", format: "mp4", busy: () => false, perform: () => undefined, close: () => undefined });
+  const exported = exportPanel.render(80).map(plain);
+  assert.equal(exported.length, 11);
+  const exportText = exported.join("\n");
+  for (const wanted of ["Export video", "demo-export.mp4", "Format", "Balanced", "Enter export", "╰"]) assert.ok(exportText.includes(wanted), `export shows ${wanted}`);
+  const tall = new ExportPanel({ bandRows: () => 30, requestRender: () => undefined }, { sourcePath: "C:/videos/demo.mp4", destination: "C:/videos/demo-export.mp4", format: "mp4", busy: () => false, perform: () => undefined, close: () => undefined });
+  assert.ok(tall.render(80).map(plain).join("\n").includes("MP4 is broadly compatible"), "the full version is unchanged on a tall terminal");
 });

@@ -36,7 +36,6 @@ const attribute = (open: number, close: number) => (text: string): string => `\u
 
 export const bold = attribute(1, 22);
 export const dim = attribute(2, 22);
-export const italic = attribute(3, 23);
 
 export const accent = foreground(PALETTE.accent);
 export const info = foreground(PALETTE.info);
@@ -63,7 +62,6 @@ export const red = bad;
 export const green = good;
 export const yellow = warn;
 export const magenta = accent;
-export const cyan = info;
 export const gray = faint;
 
 /** Cut to the width (without an ellipsis marker when it already fits) and pad with spaces to exactly that width. */
