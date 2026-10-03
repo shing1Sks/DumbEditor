@@ -28,7 +28,7 @@ test("help lists the controls and the model, and Escape closes it", () => {
   const panel = new HelpPanel(context, { model: () => "glm", close: () => { closed += 1; } });
   const lines = panel.render(WIDTH);
   assertFills(lines);
-  assert.match(screen(lines), /DumbEditor controls[\s\S]*Ctrl\+P play\/pause[\s\S]*Ask glm normally/);
+  assert.match(screen(lines), /DumbEditor controls[\s\S]*Ctrl\+P play[\s\S]*Ask glm normally/);
   panel.handleInput("x");
   panel.handleInput(KEY.esc);
   assert.equal(closed, 1);

@@ -185,7 +185,9 @@ Usage:
 
 Controls:
   Ctrl+P         Play or pause
-  Left / Right   Seek 5 seconds
+  Left / Right   Seek 5 seconds (with an empty message box)
+  Ctrl+Left/Right Seek 5 seconds, also while you are typing
+  Shift+Tab      Switch the agent between asking and auto (same as /mode)
   Up / Down      Scroll chat, navigate suggestions, or move in multiline input
   PageUp/PageDown Scroll chat by a page
   + / -          Raise or lower preview volume
@@ -213,7 +215,7 @@ Editor commands:
   /model             Choose a provider, capability, and model interactively
   /bg-music [query]  Search, preview, and select open-license music
   /assets            Browse generated and project assets
-  /permissions [mode] Show or set ask/auto approval mode
+  /mode               Choose whether the agent asks first or acts on its own
   /budget [USD]       Show or set the per-run spend limit (0 turns it off)
   /compact            Summarize earlier conversation to free context
   /status            Show project details

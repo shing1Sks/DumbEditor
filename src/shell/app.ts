@@ -23,6 +23,7 @@ import { playbackStart } from "./input/keys.js";
 import { ApprovalPanel } from "./overlays/approval.js";
 import { AssetPanel } from "./overlays/assets.js";
 import { ChoicePanel } from "./overlays/choice.js";
+import { ModePanel } from "./overlays/mode.js";
 import { ExportPanel } from "./overlays/export.js";
 import type { PanelContext } from "./overlays/frame.js";
 import { HelpPanel } from "./overlays/help.js";
@@ -86,6 +87,7 @@ export class ShellApp implements CommandApp {
         onInterrupt: () => this.interrupt(),
         onAbortAgent: () => this.engine?.abort(),
         onOpenAssets: () => this.openAssets(),
+        onTogglePermissions: () => { void this.togglePermissionMode(); },
       },
       overlays: (kind, context) => this.buildOverlay(kind, context),
       onLayout: () => this.onStateChange(),
@@ -350,6 +352,14 @@ export class ShellApp implements CommandApp {
     this.applySettings(await setAgentPermissionMode(mode));
   }
 
+  /** ask <-> auto; returns the mode now in force. */
+  async togglePermissionMode(): Promise<"ask" | "auto"> {
+    const next = this.settings.agent.permissionMode === "auto" ? "ask" : "auto";
+    await this.setPermissionMode(next);
+    this.state.setStatus(next === "auto" ? "Agent runs tools on its own (auto)" : "Agent asks before each tool (ask)");
+    return next;
+  }
+
   async setSpendCeiling(usd: number): Promise<void> {
     this.applySettings(await setSpendCeiling(usd));
   }
@@ -363,6 +373,7 @@ export class ShellApp implements CommandApp {
   // Panels ---------------------------------------------------------------------------------------
 
   openModelPicker(): void { this.state.openOverlay("model"); }
+  openModePicker(): void { this.state.openOverlay("mode"); }
 
   openHistory(showAll: boolean): void { this.showAllHistory = showAll; this.state.openOverlay("history"); }
 
@@ -428,6 +439,11 @@ export class ShellApp implements CommandApp {
     this.openPanel?.dispose?.();
     this.openPanel = { kind };
     switch (kind) {
+      case "mode":
+        return new ModePanel(panel, {
+          current: this.settings.agent.permissionMode, close,
+          apply: (mode) => { void this.setPermissionMode(mode).then(() => state.setStatus(mode === "auto" ? "Agent runs tools on its own (auto)" : "Agent asks before each tool (ask)")); },
+        });
       case "help": return new HelpPanel(panel, { model: () => state.agentModel, close });
       case "history": return new HistoryPanel(panel, { state, showAll: this.showAllHistory, close });
       case "projects":

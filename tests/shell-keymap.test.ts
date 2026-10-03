@@ -41,6 +41,23 @@ test("once something is typed those same keys belong to the composer", () => {
   for (const key of [LEFT, RIGHT, UP, DOWN, "+", "-", "[", "]", "a"]) assert.equal(resolveKey(key, ctx({ composerEmpty: false })), null, JSON.stringify(key));
 });
 
+test("Ctrl+arrows seek even with text in the message box, but not behind a panel or while the video is being replaced", () => {
+  const CTRL_LEFT = "[1;5D", CTRL_RIGHT = "[1;5C";
+  for (const composerEmpty of [true, false]) {
+    assert.deepEqual(resolveKey(CTRL_LEFT, ctx({ composerEmpty })), { type: "seek", seconds: -5 });
+    assert.deepEqual(resolveKey(CTRL_RIGHT, ctx({ composerEmpty })), { type: "seek", seconds: 5 });
+  }
+  assert.deepEqual(resolveKey(CTRL_RIGHT, ctx({ busy: true })), { type: "seek", seconds: 5 }, "an export is running");
+  assert.deepEqual(resolveKey(CTRL_RIGHT, ctx({ busy: true, videoMutationActive: true })), { type: "ignore" });
+  assert.equal(resolveKey(CTRL_RIGHT, ctx({ overlayOpen: true })), null, "a panel keeps its own keys");
+});
+
+test("Shift+Tab switches the permission mode, whatever is typed", () => {
+  assert.deepEqual(resolveKey("[Z", ctx({ composerEmpty: false })), { type: "toggle-permissions" });
+  assert.deepEqual(resolveKey("[Z", ctx({ agentRunning: true })), { type: "toggle-permissions" });
+  assert.equal(resolveKey("[Z", ctx({ overlayOpen: true })), null);
+});
+
 test("Ctrl+P plays, Ctrl+O opens the assets, Ctrl+G expands the chat, whatever is typed", () => {
   assert.deepEqual(resolveKey(CTRL_P, ctx({ composerEmpty: false })), { type: "toggle-play" });
   assert.deepEqual(resolveKey(CTRL_O, ctx({ composerEmpty: false })), { type: "open-assets" });

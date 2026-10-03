@@ -13,7 +13,7 @@ test("discovers slash commands by prefix", () => {
   assert.deepEqual(commandSuggestions("/cha").map((item) => item.name), ["/chat"]);
   assert.deepEqual(commandSuggestions("/proj").map((item) => item.name), ["/projects"]);
   assert.deepEqual(commandSuggestions("/ass").map((item) => item.name), ["/assets"]);
-  assert.deepEqual(commandSuggestions("/per").map((item) => item.name), ["/permissions"]);
+  assert.deepEqual(commandSuggestions("/mo").map((item) => item.name), ["/mode", "/model"]);
   assert.equal(commandSuggestions("normal request").length, 0);
 });
 

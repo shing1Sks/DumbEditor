@@ -13,6 +13,7 @@ export type Intent =
   | { type: "scroll-chat-page"; direction: 1 | -1 }
   | { type: "seek"; seconds: number }
   | { type: "toggle-play" }
+  | { type: "toggle-permissions" }
   | { type: "volume"; delta: number }
   | { type: "mark-in" }
   | { type: "mark-out" }
@@ -48,6 +49,10 @@ export function resolveKey(data: string, context: KeyContext): Intent | null {
   }
   if (matchesKey(data, "pageUp")) return { type: "scroll-chat-page", direction: 1 };
   if (matchesKey(data, "pageDown")) return { type: "scroll-chat-page", direction: -1 };
+  // Ctrl+arrows seek even with text in the message box, where the plain arrows move the cursor.
+  const jump = matchesKey(data, "ctrl+left") ? -SEEK_SECONDS : matchesKey(data, "ctrl+right") ? SEEK_SECONDS : 0;
+  if (jump !== 0 && !(context.busy && context.videoMutationActive)) return { type: "seek", seconds: jump };
+  if (matchesKey(data, "shift+tab")) return { type: "toggle-permissions" };
   if (context.busy) return busyIntent(data, context);
   if (matchesKey(data, "ctrl+o")) return { type: "open-assets" };
   if (matchesKey(data, "ctrl+p")) return context.hasMedia ? { type: "toggle-play" } : null;

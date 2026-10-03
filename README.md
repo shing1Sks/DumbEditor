@@ -35,6 +35,16 @@ The goal is capable software with a small surface: one terminal, one conversatio
 
 <p align="center"><em>The editor agent transcribes speech while the video, timeline, version history, assets, cost, and progress stay visible.</em></p>
 
+## What's new in 0.2
+
+- A new full-screen interface, and a streaming agent you can steer while it works and stop with Esc.
+- A real picture on Mac and Linux (the editor asks your terminal what it can show), plus Windows as before.
+- `dumbeditor update` and `dumbeditor doctor`.
+- Text and captions work with Homebrew's FFmpeg.
+- `/mode` to choose how the agent gets permission, `Shift+Tab` to flip it, `Ctrl+Left/Right` to seek while typing.
+
+The full list is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Install
 
 ### Install the command
@@ -176,7 +186,7 @@ The editor agent runs on OpenRouter and defaults to `openai/gpt-6-luna`. `/model
 
 Provider catalogs and prices change. `/model` loads the current catalog and displays each capability in its billing unit before selection.
 
-The editor agent may override a configured specialist model and pass provider-specific parameters for one request. In the default `ask` permission mode, DumbEditor shows what the agent wants to do and waits for Allow once, Allow this session, or Deny before it generates paid assets, uses a model override, runs a custom FFmpeg graph, or runs a script. `/permissions auto` lets DumbEditor proceed automatically. The selected defaults remain unchanged unless you change them through `/model`.
+The editor agent may override a configured specialist model and pass provider-specific parameters for one request. In the default `ask` permission mode, DumbEditor shows what the agent wants to do and waits for Allow once, Allow this session, or Deny before it generates paid assets, uses a model override, runs a custom FFmpeg graph, or runs a script. `auto` lets DumbEditor proceed automatically. Type `/mode` and pick one from the list, or press Shift+Tab to flip it. The selected defaults remain unchanged unless you change them through `/model`.
 
 When asked to add subtitles without a supplied file, the editor agent extracts the audio in short chunks, transcribes it with the configured OpenAI transcription model, creates a timed SRT in the project workspace, and burns it into a new version. Chunked processing keeps long recordings below individual upload limits. Cue timing is estimated within each chunk because the durable default transcription model returns text rather than word timestamps. The agent can request `gpt-4o-transcribe-diarize` when speaker labels are useful; the model switch goes through the active permission policy and produces speaker-timed SRT cues.
 
@@ -200,7 +210,7 @@ Type `/` to open the scrollable command menu. Use Up and Down to choose, then Ta
 /bg-music [QUERY]
 /assets
 /model
-/permissions [ask|auto]
+/mode
 /budget [USD]
 /compact
 /status
@@ -245,7 +255,7 @@ After selection, ask the editor agent to use the selected background music. It d
 
 ### Agent permissions, spend limit, and context
 
-`/permissions ask` is the default. A centered approval popup appears before paid asset generation, a model or parameter override, a custom FFmpeg graph, or a script. Use Left, Right, or Tab to choose, Enter to confirm, and Escape to deny. Allow this session skips the popup for that action until you quit. `/permissions auto` allows these operations without a popup.
+`ask` is the default mode. A centered approval popup appears before paid asset generation, a model or parameter override, a custom FFmpeg graph, or a script. Use Left, Right, or Tab to choose, Enter to confirm, and Escape to deny. Allow this session skips the popup for that action until you quit. In `auto` mode these operations run without a popup. Type `/mode` and pick one from the list, or press Shift+Tab to flip it.
 
 `/budget` shows the per-run spend limit and `/budget <USD>` changes it. When one agent run reaches the limit it pauses and asks whether to continue; `/budget 0` turns the limit off. `/compact` summarizes earlier conversation now, keeping a record of what the agent saw in inspected frames.
 
@@ -255,7 +265,9 @@ After selection, ask the editor agent to use the selected background music. It d
 | --- | --- |
 | `Ctrl+P` | Play or pause the main video |
 | `Space` | Type a space; preview or stop a track while the music or asset popup is active |
-| Left / Right | Seek five seconds; go back or choose in a popup |
+| Left / Right | Seek five seconds while the message box is empty (with text in it they move the cursor); go back or choose in a popup |
+| `Ctrl+Left` / `Ctrl+Right` | Seek five seconds even while text is in the message box (plain arrows then move the cursor) |
+| `Shift+Tab` | Switch the agent between `ask` and `auto` (or pick it from the `/mode` list) |
 | Up / Down | Scroll chat one row, move through lists, or move within multiline input |
 | `+` / `-` | Raise or lower preview volume |
 | `[` / `]` | Set in and out marks |
@@ -279,7 +291,14 @@ The chat footer shows the configured editor model by name alongside its running 
 
 ## Preview backend
 
-DumbEditor shows the picture the best way the terminal allows. On Windows it uses Sixel in Windows Terminal and block art elsewhere, as it always has. On macOS and Linux it asks the terminal once, before the screen starts, which picture it can show: the Kitty graphics protocol (Ghostty, kitty, WezTerm, Konsole, iTerm2) first, then Sixel (foot, xterm, VS Code with images on, iTerm2, WezTerm), then block art. It does not ask in tmux, screen or Terminal.app, which would print stray characters or hide the answer, and it falls back to what the environment says if the terminal does not answer in time. `dumbeditor doctor` shows which one is in use and why. Frames are scaled with Lanczos and painted only inside the reserved player rectangle. The screen is a fixed-size full-screen view that redraws only the rows that changed, and the picture is a separate layer sent with the text in one synchronized update, only when something could have erased it. A long or multi-line message, a window resize, a streaming answer, or an open panel never moves the panels or the video. Panels such as help, music, export, and the model picker replace the video area while they are open and bring the picture back when they close.
+DumbEditor shows the picture the best way your terminal allows.
+
+- **Windows:** Sixel in Windows Terminal, block art elsewhere. It never asks the terminal anything.
+- **macOS and Linux:** it asks the terminal once, before the screen starts, and picks the first that works: the Kitty graphics protocol (Ghostty, kitty, WezTerm, Konsole, iTerm2), then Sixel (foot, xterm, VS Code with images on, iTerm2, WezTerm), then block art. Terminal.app gets 256-colour block art.
+- It does not ask inside tmux, screen, Zellij or Terminal.app, where the question would print stray characters or never be answered. If the terminal does not answer in time, the environment decides (kitty, Ghostty and WezTerm get Kitty graphics).
+- `dumbeditor doctor` shows which one is in use and why.
+
+Frames are scaled with Lanczos and painted only inside the reserved player rectangle. The screen is a fixed-size full-screen view that redraws only the rows that changed, and the picture is a separate layer sent with the text in one synchronized update, only when something could have erased it. A long message, a window resize, a streaming answer or an open panel never moves the panels or the video. Panels such as help, music, export and the model picker replace the video area while open and bring the picture back when they close. Force a mode with the variable below if your terminal shows a hole or a stale picture:
 
 ```powershell
 $env:DUMBEDITOR_PREVIEW = "blocks"
@@ -346,6 +365,17 @@ The agent can also write subtitle files, notes, and scripts inside the workspace
 
 The packaged [`skills`](skills) are loaded into the editor agent on every run. They document the verified video, asset, audio, music, licensing, and workspace workflows. Explicit generation requests remain generation requests: if a provider returns no media, the agent reports that failure and labels any catalog alternative as a separate fallback.
 
+## Troubleshooting
+
+| What you see | What to do |
+| --- | --- |
+| Arrow keys do not seek | With text in the message box the arrows move the cursor. Use `Ctrl+Left` / `Ctrl+Right`, or clear the box with `Esc`. |
+| Block art instead of a sharp picture | Run `dumbeditor doctor`. Terminal.app, Windows consoles other than Windows Terminal, and tmux have no picture protocol; use Ghostty, iTerm2, kitty or WezTerm. |
+| A hole or a stale picture in the video area | Tell us which terminal, and set `DUMBEDITOR_PREVIEW=sixel` or `blocks` meanwhile. |
+| `dumbeditor: command not found` after install | Open a new terminal; if it persists, add npm's global folder (`npm prefix -g`) to `PATH`. |
+| `dumbeditor update` fails with EACCES | npm cannot write to its global folder. See npm's guide to [resolving EACCES errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). |
+| Text or captions are missing on a Mac | Install `ffmpeg-full` (see above), or make sure `dumbeditor-canvas` installed (`dumbeditor doctor` says). |
+
 ## Development
 
 ```bash
@@ -355,6 +385,13 @@ npm run release:check
 ```
 
 `npm run release:check` runs the full quality gate and shows the exact npm package contents without publishing. The test suite renders synthetic media with FFmpeg and checks pixels, PCM audio, version commits, input validation, catalog selection, preview lifecycle, the full-screen layout driven through an emulated terminal (long input, resize, streaming, and panels), and the editor agent's function-call loop. It does not spend provider credits.
+
+### Releasing
+
+1. Add the changes to [CHANGELOG.md](CHANGELOG.md) under a new version heading, and bump the version with `npm version <patch|minor> --no-git-tag-version`.
+2. `npm run release:check`.
+3. If the `dumbeditor-canvas` helper changed, publish it first: `cd packages/dumbeditor-canvas && npm publish`.
+4. `npm publish` for the `latest` release, or `npm publish --tag next` for a preview that `dumbeditor update --tag next` follows.
 
 ## License
 

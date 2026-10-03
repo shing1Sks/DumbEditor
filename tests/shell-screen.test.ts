@@ -25,13 +25,14 @@ async function boot(columns = 120, rows = 40) {
   state.setProject("demo", "v0000");
   state.setMedia({ path: "demo.mp4", width: 1280, height: 720, duration: 20, fps: 30, hasAudio: true, formatName: "mp4" });
   state.setAgentModel("glm");
-  const calls = { submitted: [] as string[], interrupt: 0, abort: 0, assets: 0 };
+  const calls = { submitted: [] as string[], interrupt: 0, abort: 0, assets: 0, permissions: 0 };
   const panels: StubPanel[] = [];
   const screen: ShellScreen = createShellScreen({
     terminal: fake, state, backend: "sixel", commands: COMMANDS, cwd: process.cwd(),
     hooks: {
       onSubmit: (text) => calls.submitted.push(text), onInterrupt: () => { calls.interrupt += 1; },
       onAbortAgent: () => { calls.abort += 1; }, onOpenAssets: () => { calls.assets += 1; },
+      onTogglePermissions: () => { calls.permissions += 1; },
     },
     overlays: (_kind, context) => { const panel = new StubPanel(context.bandRows); panels.push(panel); return panel; },
   });
@@ -170,6 +171,19 @@ test("while an export runs typing is blocked but the play keys still work", asyn
   fake.send("b");
   await fake.settle();
   assert.equal(screen.composer.text, "b");
+  screen.stop();
+});
+
+test("with text in the message box the plain arrows move the cursor and Ctrl+arrows still seek", async () => {
+  const { fake, state, screen, calls } = await boot();
+  fake.send("hi"); await fake.settle();
+  fake.send(KEY.right); fake.send("[D"); await fake.settle();
+  assert.equal(state.playhead, 0, "plain arrows stay with the text");
+  fake.send("[1;5C"); fake.send("[1;5C"); await fake.settle();
+  assert.equal(state.playhead, 10);
+  assert.equal(screen.composer.text, "hi", "the text is untouched");
+  fake.send("[Z"); await fake.settle();
+  assert.equal(calls.permissions, 1);
   screen.stop();
 });
 
