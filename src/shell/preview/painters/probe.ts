@@ -44,22 +44,25 @@ export function parseProbeReply(buffer: string): ProbeResult | null {
 
 /**
  * Ask the terminal what it can do. Resolves with the answer, or with null when no device-attributes reply came in
- * time. After a timeout it keeps swallowing input a moment longer, so a late reply does not turn into typed text.
+ * time. The probe keeps listening a moment after the reply (`settleMs`, for a terminal that answers out of order) and
+ * after a timeout (`lateMs`, for a slow link), then reads everything it heard, so late replies are used if they
+ * complete the answer and are never left over to turn into typed text.
  */
-export function probeTerminal(transport: ProbeTransport, timeoutMs: number, lateMs = 150): Promise<ProbeResult | null> {
+export function probeTerminal(
+  transport: ProbeTransport,
+  timeoutMs: number,
+  options: { settleMs?: number; lateMs?: number } = {},
+): Promise<ProbeResult | null> {
+  const { settleMs = 30, lateMs = 150 } = options;
   return new Promise((resolve) => {
     let buffer = "";
-    let finished = false;
+    let ending = false;
+    const finish = () => { stop(); resolve(parseProbeReply(buffer)); };
     const stop = transport.onData((data) => {
       buffer += data;
-      if (finished) return;
-      const result = parseProbeReply(buffer);
-      if (result) { finished = true; clearTimeout(timer); stop(); resolve(result); }
+      if (!ending && parseProbeReply(buffer)) { ending = true; clearTimeout(timer); setTimeout(finish, settleMs); }
     });
-    const timer = setTimeout(() => {
-      finished = true;
-      setTimeout(() => { stop(); resolve(null); }, lateMs);
-    }, timeoutMs);
+    const timer = setTimeout(() => { ending = true; setTimeout(finish, lateMs); }, timeoutMs);
     transport.write(PROBE_QUERY);
   });
 }
@@ -95,4 +98,14 @@ export function stdioTransport(stdin: StdinLike, stdout: { write(data: string): 
       if (wasPaused) stdin.pause();
     },
   };
+}
+
+/** Probe the real terminal. Any failure (raw mode refused, a closed stream) is an unanswered probe, never a crash at startup. */
+export async function probeStdio(environment: NodeJS.ProcessEnv = process.env): Promise<ProbeResult | null> {
+  try {
+    const transport = stdioTransport(process.stdin, process.stdout);
+    try { return await probeTerminal(transport, environment.SSH_CONNECTION ? 1000 : 300); } finally { transport.restore(); }
+  } catch {
+    return null;
+  }
 }

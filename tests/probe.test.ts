@@ -73,7 +73,7 @@ function fakeTerminal(reply: string | null, chunkSize = reply?.length ?? 1) {
 
 test("probing writes the query once and resolves with the parsed answer, even when it arrives in pieces", async () => {
   const { transport, written, listeners } = fakeTerminal(REPLIES.wezterm, 7);
-  const result = await probeTerminal(transport, 500, 10);
+  const result = await probeTerminal(transport, 500, { settleMs: 5, lateMs: 10 });
   assert.deepEqual(written, [PROBE_QUERY]);
   assert.equal(result?.kitty, true);
   assert.equal(result?.sixel, true);
@@ -82,25 +82,36 @@ test("probing writes the query once and resolves with the parsed answer, even wh
 
 test("garbage before the reply does not matter", async () => {
   const { transport } = fakeTerminal(`xx\u001B[Z${REPLIES.kitty}`);
-  assert.equal((await probeTerminal(transport, 500, 10))?.kitty, true);
+  assert.equal((await probeTerminal(transport, 500, { settleMs: 5, lateMs: 10 }))?.kitty, true);
 });
 
 test("a terminal that never answers gives null after the timeout, and stops listening", async () => {
   const { transport, listeners } = fakeTerminal(null);
   const started = Date.now();
-  assert.equal(await probeTerminal(transport, 30, 20), null);
+  assert.equal(await probeTerminal(transport, 30, { lateMs: 20 }), null);
   assert.ok(Date.now() - started >= 45, "waited for the timeout and the late window");
   assert.equal(listeners.size, 0);
 });
 
-test("a reply that comes in the late window after a timeout is swallowed, not left for the editor", async () => {
+test("the probe keeps listening through the late window after a timeout, then lets go, and uses a reply that arrives in it", async () => {
   const { transport, listeners } = fakeTerminal(null);
-  const swallowed: string[] = [];
-  transport.onData((data) => swallowed.push(data));
-  const pending = probeTerminal(transport, 20, 60);
-  setTimeout(() => { for (const listener of [...listeners]) listener(REPLIES.kitty); }, 40);
-  assert.equal(await pending, null, "it already gave up");
-  assert.ok(swallowed.join("").includes("kitty"), "the late bytes went to the probe's listener");
+  const pending = probeTerminal(transport, 20, { lateMs: 80 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(listeners.size, 1, "still listening 30 ms after the timeout: a late reply must not reach the editor");
+  for (const listener of [...listeners]) listener(REPLIES.kitty);
+  const result = await pending;
+  assert.equal(result?.kitty, true, "the late reply completed the answer, so it is used");
+  assert.equal(listeners.size, 0, "and then the probe lets go");
+});
+
+test("a Kitty reply that arrives just after the device attributes is still counted", async () => {
+  const { transport, listeners } = fakeTerminal(null);
+  const pending = probeTerminal(transport, 500, { settleMs: 40 });
+  for (const listener of [...listeners]) listener(da1("62;22c"));
+  setTimeout(() => { for (const listener of [...listeners]) listener(KITTY_OK); }, 10);
+  const result = await pending;
+  assert.equal(result?.kitty, true);
+  assert.equal(listeners.size, 0);
 });
 
 test("the real transport turns raw input on for the probe and restores exactly what it found", () => {

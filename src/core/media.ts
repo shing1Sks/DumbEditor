@@ -241,6 +241,7 @@ export function encodePreviewFrame(
   size: PreviewSize,
   backend: PreviewBackend,
 ): string {
+  if (backend === "kitty") throw new Error("A Kitty frame is made by the Kitty painter, not by encodePreviewFrame");
   return backend === "sixel"
     ? rgbToSixel(buffer, size.width, size.height)
     : rgbToAnsi(buffer, size.width, size.height);

@@ -24,13 +24,16 @@ test("Windows never asks the terminal and keeps its rule", async () => {
   assert.equal((await run({}, { platform: "win32" })).id, "blocks");
 });
 
-test("an explicit setting wins everywhere, Windows included, without asking", async () => {
+test("an explicit setting wins everywhere; outside Windows a picture setting still asks once, for the cell size only", async () => {
   for (const platform of ["win32", "darwin", "linux"] as const) {
     for (const setting of ["blocks", "sixel", "kitty"] as const) {
-      const result = await run({ DUMBEDITOR_PREVIEW: ` ${setting.toUpperCase()} ` }, { platform, result: answer({ kitty: true }) });
-      assert.deepEqual([result.id, result.asked], [setting, 0], `${platform} ${setting}`);
+      const result = await run({ DUMBEDITOR_PREVIEW: ` ${setting.toUpperCase()} ` }, { platform, result: answer({ sixel: true, cell: { width: 17, height: 34 } }) });
+      assert.equal(result.id, setting, `${platform} ${setting}: the setting wins over what the terminal says`);
+      assert.equal(result.asked, platform !== "win32" && setting !== "blocks" ? 1 : 0, `${platform} ${setting}`);
+      if (result.asked === 1) assert.deepEqual(result.probed?.cell, { width: 17, height: 34 }, "the cell size is kept");
     }
   }
+  assert.equal((await run({ DUMBEDITOR_PREVIEW: "kitty", TMUX: "x" })).asked, 0, "not inside tmux");
   const auto = await run({ DUMBEDITOR_PREVIEW: "auto" }, { result: answer({ sixel: true }) });
   assert.deepEqual([auto.id, auto.asked], ["sixel", 1], "auto means ask");
 });
@@ -41,6 +44,7 @@ test("Terminal.app, tmux, screen and a non-terminal are never asked", async () =
     [{ TMUX: "/tmp/tmux-501/default,1,0" }, true],
     [{ TERM: "tmux-256color" }, true],
     [{ TERM: "screen-256color" }, true],
+    [{ ZELLIJ: "0", TERM_PROGRAM: "ghostty" }, true],
     [{ TERM_PROGRAM: "ghostty" }, false],
   ];
   for (const [env, isTTY] of cases) {

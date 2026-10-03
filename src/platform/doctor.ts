@@ -6,7 +6,7 @@ import { loadCanvas } from "../core/text-image.js";
 import { colorMode, type ColorMode } from "../shell/preview/painters/color.js";
 import { detectPainter } from "../shell/preview/painters/detect.js";
 import type { PainterId } from "../shell/preview/painters/index.js";
-import { probeTerminal, stdioTransport } from "../shell/preview/painters/probe.js";
+import { probeStdio } from "../shell/preview/painters/probe.js";
 import { installHints } from "./hints.js";
 
 /** Filters the editor's own commands use. Every FFmpeg build has them. */
@@ -130,10 +130,7 @@ export async function gatherInputs(environment: NodeJS.ProcessEnv = process.env)
   const ffmpegFile = resolveBinary("ffmpeg");
   const detected = await detectPainter({
     env: environment, platform: process.platform, isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
-    probe: async () => {
-      const transport = stdioTransport(process.stdin, process.stdout);
-      try { return await probeTerminal(transport, environment.SSH_CONNECTION ? 1000 : 300); } finally { transport.restore(); }
-    },
+    probe: () => probeStdio(environment),
   });
   return {
     node: process.version, platform: process.platform, ffmpeg, ffmpegPath: ffmpegFile === "ffmpeg" ? null : ffmpegFile, ffmpegDirectoryProblem: ffmpegDirectoryProblem(), ffprobe, ffplay, imageLibrary: canvas !== null,

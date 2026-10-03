@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,9 +9,16 @@ import { setupLocalSandbox } from "./sandbox.js";
 const configDirectory = process.env.DUMBEDITOR_CONFIG_DIR?.trim() || join(homedir(), ".dumbeditor");
 export const userConfigPath = join(configDirectory, ".env");
 
+/** Settings that choose which program runs. Only the real environment and the user's own config file may set them: a .env in whatever folder you happen to be in must not. */
+const USER_ONLY = new Set(["DUMBEDITOR_FFMPEG_DIR"]);
+
 export function loadEnvironment(packageRoot: string): void {
-  for (const path of [userConfigPath, join(process.cwd(), ".env"), join(packageRoot, ".env")]) {
-    if (existsSync(path)) config({ path, override: false, quiet: true });
+  if (existsSync(userConfigPath)) config({ path: userConfigPath, override: false, quiet: true });
+  for (const path of [join(process.cwd(), ".env"), join(packageRoot, ".env")]) {
+    if (!existsSync(path)) continue;
+    for (const [key, value] of Object.entries(parse(readFileSync(path)))) {
+      if (!USER_ONLY.has(key) && process.env[key] === undefined) process.env[key] = value;
+    }
   }
 }
 

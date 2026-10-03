@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /** Where Homebrew puts the keg-only `ffmpeg-full` (it is not linked into PATH, so installing it alone changes nothing). */
 const HOMEBREW_KEGS = ["/opt/homebrew/opt/ffmpeg-full/bin", "/usr/local/opt/ffmpeg-full/bin"];
@@ -19,7 +19,7 @@ const real = (): BinaryContext => ({ env: process.env, platform: process.platfor
  */
 export function ffmpegDirectory(context: BinaryContext = real()): string | null {
   const configured = context.env.DUMBEDITOR_FFMPEG_DIR?.trim();
-  if (configured) return configured;
+  if (configured) return resolve(configured);
   if (context.platform === "darwin") return HOMEBREW_KEGS.find((directory) => context.exists(join(directory, "ffmpeg"))) ?? null;
   return null;
 }
@@ -40,6 +40,6 @@ export function resolveBinary(name: string, context: BinaryContext = real()): st
 export function ffmpegDirectoryProblem(context: BinaryContext = real()): string | null {
   const configured = context.env.DUMBEDITOR_FFMPEG_DIR?.trim();
   if (!configured) return null;
-  const file = join(configured, context.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+  const file = join(resolve(configured), context.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
   return context.exists(file) ? null : `DUMBEDITOR_FFMPEG_DIR is ${configured}, but there is no ${file}`;
 }

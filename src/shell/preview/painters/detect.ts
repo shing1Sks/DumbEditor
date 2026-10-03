@@ -32,18 +32,20 @@ function kittyHint(env: NodeJS.ProcessEnv): boolean {
  */
 export async function detectPainter(options: DetectOptions): Promise<Detected> {
   const { env, platform } = options;
+  const multiplexer = Boolean(env.TMUX) || Boolean(env.ZELLIJ) || /^(tmux|screen)/.test(env.TERM ?? "");
+  const appleTerminal = env.TERM_PROGRAM === "Apple_Terminal";
+  const mayAsk = platform !== "win32" && options.isTTY && !multiplexer && !appleTerminal && options.probe !== undefined;
+
   const override = env.DUMBEDITOR_PREVIEW?.trim().toLowerCase();
   if (override === "blocks" || override === "sixel" || override === "kitty") {
-    return { id: override, reason: `set by DUMBEDITOR_PREVIEW=${override}`, probed: null };
+    // The choice is made, but a picture still needs the terminal's cell size, so ask for that.
+    const probed = override !== "blocks" && mayAsk ? await options.probe!() : null;
+    return { id: override, reason: `set by DUMBEDITOR_PREVIEW=${override}`, probed };
   }
   const fallback = (): Detected => ({ id: detectPreviewBackend(env), reason: explainBackend(env), probed: null });
-  if (platform === "win32") return fallback();
+  if (!mayAsk) return fallback();
 
-  const multiplexer = Boolean(env.TMUX) || /^(tmux|screen)/.test(env.TERM ?? "");
-  const appleTerminal = env.TERM_PROGRAM === "Apple_Terminal";
-  if (!options.isTTY || multiplexer || appleTerminal || !options.probe) return fallback();
-
-  const probed = await options.probe();
+  const probed = await options.probe!();
   if (probed?.kitty) return { id: "kitty", reason: `Kitty graphics (answered by ${probed.name ?? "the terminal"})`, probed };
   if (probed?.sixel) return { id: "sixel", reason: `Sixel (reported by ${probed.name ?? "the terminal"})`, probed };
   if (!probed && kittyHint(env)) return { id: "kitty", reason: "Kitty graphics (the terminal did not answer in time, but the environment says it has them)", probed: null };

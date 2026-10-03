@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { rgbToAnsi } from "../src/core/media.js";
-import { nearestAnsi256, rgbToAnsi256 } from "../src/shell/preview/painters/ansi256.js";
+import { nearestAnsi256, paletteColor, rgbToAnsi256 } from "../src/shell/preview/painters/ansi256.js";
 import { colorMode } from "../src/shell/preview/painters/color.js";
 import { painterFor } from "../src/shell/preview/painters/index.js";
 
@@ -72,8 +72,31 @@ test("dithering never moves a colour that is already in the palette", () => {
   assert.deepEqual([...indexes], [String(exact)]);
 });
 
+test("flat black, flat greys and near-black stay one colour: dithering them would only add noise", () => {
+  for (const [value, expected] of [[0, 16], [3, 16], [128, 244], [8, 232], [238, 255], [255, 231]] as const) {
+    const output = rgbToAnsi256(frame(16, 8, () => [value, value, value]), 16, 8);
+    const indexes = new Set([...output.matchAll(/\u001B\[(?:38|48);5;(\d+)m/g)].map((match) => match[1]));
+    assert.deepEqual([...indexes], [String(expected)], `grey ${value}`);
+  }
+  const letterbox = rgbToAnsi256(frame(30, 4, () => [0, 0, 0]), 30, 4).split("\n");
+  for (const line of letterbox) assert.equal([...line.matchAll(/\u001B\[38;5;/g)].length, 1, "one colour code per row on a black bar");
+});
+
+test("the palette colour of an index is what the xterm palette says, and maps back to itself", () => {
+  assert.deepEqual(paletteColor(16), [0, 0, 0]);
+  assert.deepEqual(paletteColor(231), [255, 255, 255]);
+  assert.deepEqual(paletteColor(196), [255, 0, 0]);
+  assert.deepEqual(paletteColor(232), [8, 8, 8]);
+  assert.deepEqual(paletteColor(255), [238, 238, 238]);
+  for (let index = 16; index < 256; index += 1) {
+    const [red, green, blue] = paletteColor(index);
+    assert.equal(nearestAnsi256(red, green, blue), index, `index ${index} maps back to itself`);
+  }
+});
+
 test("dithering does spread a colour between two palette steps over both of them", () => {
-  const output = rgbToAnsi256(frame(16, 16, () => [115, 115, 115]), 16, 16);
+  // Each channel is exactly between two cube levels (95|135, 135|175, 175|215), far from any palette entry.
+  const output = rgbToAnsi256(frame(16, 16, () => [115, 155, 195]), 16, 16);
   const indexes = new Set([...output.matchAll(/\u001B\[(?:38|48);5;(\d+)m/g)].map((match) => match[1]));
   assert.ok(indexes.size >= 2, `used ${indexes.size} different colours`);
 });
