@@ -145,7 +145,8 @@ async function prepareText(
   await writeFile(join(workspace, subtitleName), subtitle, "utf8");
   return {
     extraInputs: [],
-    graph: `[0:v:0]ass=${subtitleName}[vout]`,
+    // Named option: the bare form `ass=file` is rejected by some FFmpeg builds (macOS Homebrew).
+    graph: `[0:v:0]ass=filename=${subtitleName}[vout]`,
     video: "[vout]",
     audio: media.hasAudio ? "source" : null,
     summary: `Added text at ${formatRange(range)}`,
@@ -166,7 +167,7 @@ async function prepareSubtitles(
   await copyFile(input, join(workspace, subtitleName));
   return {
     extraInputs: [],
-    graph: `[0:v:0]subtitles=${subtitleName}[vout]`,
+    graph: `[0:v:0]subtitles=filename=${subtitleName}[vout]`,
     video: "[vout]",
     audio: media.hasAudio ? "source" : null,
     summary: "Burned in subtitles",
