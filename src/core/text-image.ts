@@ -34,8 +34,16 @@ function fontDirectory(): string {
   throw new Error("The bundled fonts were not found");
 }
 
+let override: (() => Promise<CanvasModule | null>) | null = null;
+
+/** Test hook: replace how the canvas library is loaded (null restores the real loader). */
+export function overrideCanvasLoader(loader: (() => Promise<CanvasModule | null>) | null): void {
+  override = loader;
+}
+
 /** The optional canvas library with the bundled fonts registered, or null when it is not installed. */
 export function loadCanvas(): Promise<CanvasModule | null> {
+  if (override) return override();
   loaded ??= import("@napi-rs/canvas")
     .then((canvas) => {
       const directory = fontDirectory();

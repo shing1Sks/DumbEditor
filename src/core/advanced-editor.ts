@@ -1,10 +1,16 @@
-import { copyFile, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { MediaInfo, TimeRange, VersionEntry } from "../types.js";
+import { parseCues } from "./captions.js";
+import { chooseTextRenderer, ffmpegCapabilities } from "./ffmpeg-capabilities.js";
 import { probeMedia } from "./media.js";
 import { runProcess } from "./process.js";
 import { ProjectStore } from "./project.js";
+import { renderTextImage } from "./text-image.js";
 import { formatTime } from "./time.js";
+
+/** Captions drawn as images get one overlay each; past this many the render and the filter graph get heavy. */
+export const MAX_IMAGE_CUES = 200;
 
 export type TextPosition =
   | "top-left"
@@ -131,6 +137,21 @@ async function prepareText(
   const color = assColor(edit.color ?? "#ffffff");
   const position = edit.position ?? "bottom-center";
   const alignment = ASS_ALIGNMENT[position];
+  if (chooseTextRenderer(await ffmpegCapabilities()) === "images") {
+    // This FFmpeg has no libass: draw the text as an image the size of the text and lay it on the video.
+    const image = await renderTextImage({
+      videoWidth: media.width, videoHeight: media.height, text, fontSize, color: edit.color ?? "#ffffff", position,
+    });
+    const imageName = "text-overlay.png";
+    await writeFile(join(workspace, imageName), image.png);
+    return {
+      extraInputs: ["-i", imageName],
+      graph: `[1:v]format=rgba[text];[0:v:0][text]overlay=x=${image.x}:y=${image.y}:enable='between(t,${fixed(range.start)},${fixed(range.end)})'[vout]`,
+      video: "[vout]",
+      audio: media.hasAudio ? "source" : null,
+      summary: `Added text at ${formatRange(range)}`,
+    };
+  }
   const subtitleName = "text-overlay.ass";
   const subtitle = buildAssDocument({
     width: media.width,
@@ -162,6 +183,7 @@ async function prepareSubtitles(
   if (!new Set([".srt", ".ass", ".ssa", ".vtt"]).has(extension)) {
     throw new Error("Subtitle file must use .srt, .ass, .ssa, or .vtt");
   }
+  if (chooseTextRenderer(await ffmpegCapabilities()) === "images") return prepareSubtitleImages(input, extension, media, workspace);
   const subtitleName = `subtitles${extension}`;
   await copyFile(input, join(workspace, subtitleName));
   return {
@@ -171,6 +193,37 @@ async function prepareSubtitles(
     audio: media.hasAudio ? "source" : null,
     summary: "Burned in subtitles",
   };
+}
+
+/** Captions for an FFmpeg without libass: one image per cue, laid on the video during the cue's time. */
+async function prepareSubtitleImages(input: string, extension: string, media: MediaInfo, workspace: string): Promise<RenderPlan> {
+  if (extension === ".ass" || extension === ".ssa") {
+    throw new Error("Burning in .ass or .ssa subtitles needs an FFmpeg with libass. Run `dumbeditor doctor` to see how to install one, or use an .srt or .vtt file.");
+  }
+  const cues = parseCues(await readFile(input, "utf8"), extension as ".srt" | ".vtt")
+    .filter((cue) => cue.start < media.duration)
+    .map((cue) => ({ ...cue, end: Math.min(cue.end, media.duration) }));
+  if (cues.length === 0) throw new Error("The subtitle file has no readable cues inside the video");
+  if (cues.length > MAX_IMAGE_CUES) {
+    throw new Error(`This FFmpeg has no libass, so captions are drawn as images, and ${MAX_IMAGE_CUES} cues is the limit (the file has ${cues.length}). Run \`dumbeditor doctor\` to see how to install an FFmpeg with libass.`);
+  }
+  const fontSize = Math.max(12, Math.round((media.height * 16) / 288));
+  const extraInputs: string[] = [];
+  const parts: string[] = [];
+  let previous = "0:v:0";
+  for (const [index, cue] of cues.entries()) {
+    const image = await renderTextImage({
+      videoWidth: media.width, videoHeight: media.height, text: cue.text, fontSize, color: "#ffffff", position: "bottom-center",
+    });
+    const name = `cue-${index + 1}.png`;
+    await writeFile(join(workspace, name), image.png);
+    extraInputs.push("-i", name);
+    const label = index === cues.length - 1 ? "vout" : `o${index + 1}`;
+    parts.push(`[${index + 1}:v]format=rgba[c${index + 1}]`);
+    parts.push(`[${previous}][c${index + 1}]overlay=x=${image.x}:y=${image.y}:enable='between(t,${fixed(cue.start)},${fixed(cue.end)})'[${label}]`);
+    previous = label;
+  }
+  return { extraInputs, graph: parts.join(";"), video: "[vout]", audio: media.hasAudio ? "source" : null, summary: "Burned in subtitles" };
 }
 
 async function prepareImageOverlay(

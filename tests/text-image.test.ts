@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadCanvas, renderTextImage, wrapLines } from "../src/core/text-image.js";
+import { ImageTextUnavailable, loadCanvas, overrideCanvasLoader, renderTextImage, wrapLines } from "../src/core/text-image.js";
 
 const width = (text: string) => text.length * 10;
 
@@ -64,6 +64,16 @@ test("long, multi-line, emoji and Cyrillic text still fits the frame, and a huge
     const image = await renderTextImage({ videoWidth: 320, videoHeight: 180, text: item.text, fontSize: item.fontSize, color: "#ffcc00", position: "bottom-right" });
     assert.ok(image.x >= 0 && image.y >= 0 && image.x + image.width <= 320 && image.y + image.height <= 180, `${item.text.slice(0, 12)} fits`);
   }
+});
+
+test("without the canvas library the error points to dumbeditor doctor", async () => {
+  overrideCanvasLoader(async () => null);
+  try {
+    await assert.rejects(
+      renderTextImage({ videoWidth: 320, videoHeight: 180, text: "x", fontSize: 24, color: "#ffffff", position: "center" }),
+      (error: Error) => error instanceof ImageTextUnavailable && /dumbeditor doctor/.test(error.message),
+    );
+  } finally { overrideCanvasLoader(null); }
 });
 
 test("a bad colour is refused with the same words the libass path uses", async (t) => {
