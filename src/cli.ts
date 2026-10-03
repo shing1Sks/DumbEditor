@@ -21,6 +21,11 @@ if (args[0] === "setup") {
   process.exit(process.exitCode ?? 0);
 }
 
+if (args[0] === "doctor") {
+  const { runDoctor } = await import("./platform/doctor.js");
+  process.exit(await runDoctor());
+}
+
 if (args.includes("--help") || args.includes("-h")) {
   console.log(helpMessage(version));
   process.exit(0);
@@ -116,6 +121,7 @@ versioned, reversible, and rendered locally with FFmpeg.
 
 Start:
   dumbeditor setup
+  dumbeditor doctor
   dumbeditor <video>
 
 Learn more:
@@ -146,6 +152,7 @@ Usage:
   dumbeditor <video>    Open a video in the editor
   dumbeditor            Show the project overview and next steps
   dumbeditor setup      Configure provider keys and the local agent sandbox
+  dumbeditor doctor     Check FFmpeg, text support and the terminal picture
   dumbeditor clean <video> Permanently remove saved project state; preserve the source
   dumbeditor --fresh <video> Archive the current project and start a clean session
   dumbeditor --help     Show this complete reference
