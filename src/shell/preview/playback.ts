@@ -1,9 +1,10 @@
 import {
-  encodePreviewFrame, extractRawFrame, previewRenderSize, streamRawPreview,
+  extractRawFrame, streamRawPreview,
   type PreviewBackend, type PreviewSize, type PreviewStream,
 } from "../../core/media.js";
 import type { MediaInfo } from "../../types.js";
 import { playbackStart } from "../input/keys.js";
+import { painterFor } from "./painters/index.js";
 
 export interface PlaybackInput {
   filePath: string | null | undefined;
@@ -52,7 +53,8 @@ export class PlaybackController {
     this.stop();
     const { filePath, media } = input;
     if (!filePath || !media) return;
-    const size = previewRenderSize(media, input.columns, input.rows, input.backend);
+    const painter = painterFor(input.backend);
+    const size = painter.renderSize(media, input.columns, input.rows);
     if (size.width === 0 || size.height === 0) return;
     const generation = this.generation;
     const deliver = (buffer: Buffer, time: number) => this.queue(generation, buffer, time, size, input.backend);
@@ -69,7 +71,7 @@ export class PlaybackController {
     }
 
     const preview: PreviewStream = streamRawPreview({
-      filePath, start: playbackStart(input.time, media.duration), size, fps: input.backend === "sixel" ? 12 : 10,
+      filePath, start: playbackStart(input.time, media.duration), size, fps: painter.fps,
       onFrame: (frame, time) => deliver(frame, Math.min(time, media.duration)),
       onEnd: () => { if (generation === this.generation) this.callbacks.onEnd(); },
       onError: (error) => { if (generation === this.generation) this.callbacks.onError(error); },
@@ -100,7 +102,7 @@ export class PlaybackController {
       this.pending = null;
       if (next && generation === this.generation) {
         try {
-          this.callbacks.onFrame({ encoded: encodePreviewFrame(next.buffer, size, backend), size, backend, time: next.time });
+          this.callbacks.onFrame({ encoded: painterFor(backend).encode(next.buffer, size), size, backend, time: next.time });
         } catch (error) {
           this.callbacks.onError(toError(error));
         }

@@ -18,6 +18,8 @@ export interface LayerHooks {
   layer(): VideoLayer | null;
   /** The text currently drawn in the rows of the rectangle, used to notice when something may have erased the picture. */
   bandText(rect: CellRect): string;
+  /** Escape sequences that take the picture off the screen, for painters whose picture outlives the text drawn over it. */
+  remove?(): string;
   onResize?(): void;
 }
 
@@ -53,7 +55,8 @@ export class LayeredTerminal implements Terminal {
    */
   stop(): void {
     this.stopped = true;
-    const data = this.pending.join("");
+    const cleanup = this.lastKey !== null ? this.hooks.remove?.() ?? "" : "";
+    const data = cleanup + this.pending.join("");
     this.pending = [];
     if (data) this.inner.write(data);
     this.inner.stop();
@@ -93,8 +96,10 @@ export class LayeredTerminal implements Terminal {
     this.pending = [];
     const layer = this.hooks.layer();
     if (!layer) {
-      if (this.lastKey !== null) { this.lastKey = null; this.forced = true; }
-      if (data) this.inner.write(data);
+      let cleanup = "";
+      if (this.lastKey !== null) { this.lastKey = null; this.forced = true; cleanup = this.hooks.remove?.() ?? ""; }
+      const out = data.endsWith(SYNC_END) && cleanup ? `${data.slice(0, -SYNC_END.length)}${cleanup}${SYNC_END}` : data + cleanup;
+      if (out) this.inner.write(out);
       return;
     }
     const key = `${layer.rect.x},${layer.rect.y},${layer.rect.w},${layer.rect.h}|${layer.revision}|${this.hooks.bandText(layer.rect)}`;

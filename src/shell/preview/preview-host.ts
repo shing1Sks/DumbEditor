@@ -1,5 +1,6 @@
 import type { Terminal } from "@earendil-works/pi-tui";
 import { LayeredTerminal, type VideoLayer } from "./layered-terminal.js";
+import { painterFor, type PainterId } from "./painters/index.js";
 import { buildVideoLayer, frameFits, type CellRect, type EncodedFrame } from "./video-layer.js";
 
 export interface PreviewHostOptions {
@@ -20,11 +21,14 @@ export class PreviewHost {
   private frame: EncodedFrame | null = null;
   private revision = 0;
   private cached: { revision: number; rect: string; output: string } | null = null;
+  /** The painter of the picture last put on screen, so its `remove` can take it off again. */
+  private drawn: PainterId | null = null;
 
   constructor(inner: Terminal, private readonly options: PreviewHostOptions) {
     this.terminal = new LayeredTerminal(inner, {
       layer: () => this.layer(),
       bandText: (rect) => this.options.screenLines().slice(rect.y, rect.y + rect.h).join("\n"),
+      remove: () => (this.drawn ? painterFor(this.drawn).remove() : ""),
       ...(options.onResize ? { onResize: options.onResize } : {}),
     });
   }
@@ -54,6 +58,7 @@ export class PreviewHost {
     const rect = this.options.rect();
     // A picture made for a bigger window would cover the chat and the prompt box: wait for one that fits.
     if (!frameFits(this.frame, rect)) return null;
+    this.drawn = this.frame.backend;
     const rectKey = `${rect.x},${rect.y},${rect.w},${rect.h}`;
     if (!this.cached || this.cached.revision !== this.revision || this.cached.rect !== rectKey) {
       this.cached = { revision: this.revision, rect: rectKey, output: buildVideoLayer(this.frame, rect) };
